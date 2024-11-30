@@ -25,7 +25,7 @@ pub const OSMWay = struct {
 };
 
 // Nd is ommited, as it should link to an actual node
-// Relations connect a large amount of nodes, ways, and other relations together (trough members)
+// Relations connect a large amount of nodes, ways, and other relations together (through members)
 pub const OSMType = enum { None, Node, Way, Tag, Relation, Member };
 pub const OSMEntry = union(OSMType) {
     None: void,
