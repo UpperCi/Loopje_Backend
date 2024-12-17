@@ -5,7 +5,7 @@ const c = @cImport({
     @cInclude("sqlite3.h");
 });
 
-pub const OSMNode = struct {
+pub const OsmNode = struct {
     id: i64,
     lat: f64,
     lon: f64,
@@ -13,25 +13,27 @@ pub const OSMNode = struct {
     tags: []i64 = &.{},
 };
 
-pub const OSMTag = struct {
+pub const OsmTag = struct {
     key: []const u8,
     value: []const u8,
 };
 
 // Can be marked as invisible, don't add to db if that's the case
-pub const OSMWay = struct {
-    nodes: []i64,
-    value: []i64,
+pub const OsmWay = struct {
+    id: i64,
+    visible: bool,
+    nodes: []i64 = &.{},
+    value: []i64 = &.{},
 };
 
 // Nd is ommited, as it should link to an actual node
 // Relations connect a large amount of nodes, ways, and other relations together (through members)
-pub const OSMType = enum { None, Node, Way, Tag, Relation, Member };
-pub const OSMEntry = union(OSMType) {
+pub const OsmType = enum { None, Node, Way, Tag, Relation, Member };
+pub const OsmEntry = union(OsmType) {
     None: void,
-    Node: OSMNode,
-    Way: void,
-    Tag: OSMTag,
+    Node: OsmNode,
+    Way: OsmWay,
+    Tag: OsmTag,
     Relation: void,
     Member: void,
 };
@@ -62,6 +64,14 @@ pub const DB = struct {
                     \\      node_id bigint unsigned,
                     \\      tag_id integer
                     \\ );
+                    \\ create table if not exists osm_ways (
+                    \\      id bigint unsigned unique,
+                    \\      visible integer unsigned
+                    \\  );
+                    \\ create table if not exists osm_ways_tags (
+                    \\      way_id bigint unsigned,
+                    \\      tag_id integer
+                    \\ );
                 ;
                 var errmsg: [*c]u8 = undefined;
                 if (c.SQLITE_OK != c.sqlite3_exec(db, init_db_query, null, null, &errmsg)) {
@@ -81,118 +91,130 @@ pub const DB = struct {
         _ = c.sqlite3_close(self.db);
     }
 
-    pub fn start_transaction(self: DB) void {
+    pub fn startTransaction(self: DB) void {
         _ = c.sqlite3_exec(self.db, "BEGIN TRANSACTION", null, null, null);
     }
 
-    pub fn end_transaction(self: DB) void {
+    pub fn endTransaction(self: DB) void {
         _ = c.sqlite3_exec(self.db, "END TRANSACTION", null, null, null);
+    }
+
+    // ===== HELPERS =====
+
+    fn trySqliteResult(self: DB, result: c_int) !void {
+        if (result != c.SQLITE_OK) {
+            std.debug.print("ERROR: {s}\n", .{c.sqlite3_errmsg(self.db)});
+            return DBError.GenericError;
+        }
+    }
+
+    fn queryWithBindings(self: DB, query: []const u8, values: anytype) !void {
+        const ValuesType = @TypeOf(values);
+        const values_type_info = @typeInfo(ValuesType);
+
+        if (values_type_info != .Struct) {
+            @compileError("query expects tuple argument, found " ++ @typeName(ValuesType));
+        }
+
+        var stmt: ?*c.sqlite3_stmt = undefined;
+
+        try self.trySqliteResult(c.sqlite3_prepare_v2(self.db, query.ptr, @intCast(query.len + 1), &stmt, null));
+
+        inline for (values, 1..) |value, pos| {
+            const ValueType = @TypeOf(value);
+            switch (@typeInfo(ValueType)) {
+                // NOTE: Assumes i64
+                .Int => |int_info| {
+                    switch (int_info.bits) {
+                        64 => try self.trySqliteResult(c.sqlite3_bind_int64(stmt, pos, value)),
+                        else => @compileError("no bind implementation for " ++ @typeName(ValueType)),
+                    }
+                },
+                // NOTE: Assumes f64
+                .Float => |float_info| {
+                    switch (float_info.bits) {
+                        64 => try self.trySqliteResult(c.sqlite3_bind_double(stmt, pos, value)),
+                        else => @compileError("no bind implementation for " ++ @typeName(ValueType)),
+                    }
+                },
+                .Bool => {
+                    // Sqlite doesn't support booleans, store as integer instead
+                    if (value) {
+                        try self.trySqliteResult(c.sqlite3_bind_int(stmt, pos, 1));
+                    } else {
+                        try self.trySqliteResult(c.sqlite3_bind_int(stmt, pos, 0));
+                    }
+                },
+                // NOTE: only supports binding char slices (as text)
+                .Pointer => |ptr| switch (ptr.size) {
+                    .Slice => {
+                        try self.trySqliteResult(c.sqlite3_bind_text(stmt, pos, value.ptr, @intCast(value.len), c.SQLITE_STATIC));
+                    },
+                    else => {
+                        @compileError("no bind implementation for single-item pointers");
+                    },
+                },
+                else => {
+                    @compileError("no bind implementation for type " ++ @typeName(ValueType));
+                },
+            }
+        }
+
+        const result = stmt.?;
+
+        const row = c.sqlite3_step(result);
+        if (c.SQLITE_DONE != row) {
+            std.debug.print("({s}) Step: {}: {s}\n", .{ query, row, c.sqlite3_errmsg(self.db) });
+            return DBError.GenericError;
+        }
+
+        if (c.SQLITE_OK != c.sqlite3_finalize(result)) {
+            std.debug.print("Couldn't finalize query {s}\n", .{query});
+            return DBError.GenericError;
+        }
     }
 
     // ===== INSERTIONS =====
 
-    pub fn insert_osm_node(self: DB, id: i64, lat: f64, lon: f64) !void {
+    pub fn insertOsmNode(self: DB, id: i64, lat: f64, lon: f64) !void {
         const query = "INSERT INTO osm_nodes (id, latitude, longitude) VALUES (?1, ?2, ?3);";
-        var stmt: ?*c.sqlite3_stmt = undefined;
-        if (c.SQLITE_OK != c.sqlite3_prepare_v2(self.db, query, query.len + 1, &stmt, null)) {
-            std.debug.print("Couldn't insert node {}\n", .{id});
-            return DBError.GenericError;
-        }
-        const cast_id = @as(i64, @bitCast(id));
-        if (c.SQLITE_OK != c.sqlite3_bind_int64(stmt, 1, cast_id)) {
-            std.debug.print("Couldn't bind value {}\n", .{cast_id});
-            return DBError.GenericError;
-        }
-        if (c.SQLITE_OK != c.sqlite3_bind_double(stmt, 2, lat)) {
-            std.debug.print("Couldn't bind value {}\n", .{lat});
-            return DBError.GenericError;
-        }
-        if (c.SQLITE_OK != c.sqlite3_bind_double(stmt, 3, lon)) {
-            std.debug.print("Couldn't bind value {}\n", .{lon});
-            return DBError.GenericError;
-        }
-        const result = stmt.?;
 
-        const row = c.sqlite3_step(result);
-        if (c.SQLITE_DONE != row) {
-            std.debug.print("Step: {}: {s}\n", .{ row, c.sqlite3_errmsg(self.db) });
-            return DBError.GenericError;
-        }
-
-        if (c.SQLITE_OK != c.sqlite3_finalize(result)) {
-            std.debug.print("Couldn't finalize query {}\n", .{lon});
-            return DBError.GenericError;
-        }
+        try self.queryWithBindings(query, .{ id, lat, lon });
     }
 
-    fn connect_osm_node_tag(self: DB, node_id: i64, tag_id: i64) !void {
-        const query = "INSERT INTO osm_nodes_tags (node_id, tag_id) VALUES (?1, ?2);";
-        var stmt: ?*c.sqlite3_stmt = undefined;
-        if (c.SQLITE_OK != c.sqlite3_prepare_v2(self.db, query, query.len + 1, &stmt, null)) {
-            std.debug.print("Couldn't connect node with tag {any}\n", .{tag_id});
-            return DBError.GenericError;
-        }
-        if (c.SQLITE_OK != c.sqlite3_bind_int64(stmt, 1, @intCast(node_id))) {
-            std.debug.print("Couldn't bind node_id {any}\n", .{tag_id});
-            return DBError.GenericError;
-        }
-        if (c.SQLITE_OK != c.sqlite3_bind_int64(stmt, 2, tag_id)) {
-            std.debug.print("Couldn't bind tag_id {any}\n", .{tag_id});
-            return DBError.GenericError;
-        }
-        const result = stmt.?;
-
-        const row = c.sqlite3_step(result);
-        if (c.SQLITE_DONE != row) {
-            std.debug.print("Step: {}: {any}\n", .{ row, c.sqlite3_errmsg(self.db) });
-            return DBError.GenericError;
+    pub fn insertOsmTag(self: DB, parent: OsmEntry, key: []const u8, value: []const u8) !void {
+        switch (parent) {
+            .None => return,
+            else => {},
         }
 
-        if (c.SQLITE_OK != c.sqlite3_finalize(result)) {
-            std.debug.print("Couldn't finalize query {any}\n", .{tag_id});
-            return DBError.GenericError;
-        }
-    }
-
-    // TODO make connection to parent
-    pub fn insert_osm_tag(self: DB, parent: OSMEntry, key: []const u8, value: []const u8) !void {
-        const query = "INSERT INTO osm_tags (id, key, value) VALUES (NULL, ?2, ?3);";
-        var stmt: ?*c.sqlite3_stmt = undefined;
-        if (c.SQLITE_OK != c.sqlite3_prepare_v2(self.db, query, query.len + 1, &stmt, null)) {
-            std.debug.print("Couldn't insert tag {s}\n", .{key});
-            return DBError.GenericError;
-        }
-        if (c.SQLITE_OK != c.sqlite3_bind_text(stmt, 2, key.ptr, @intCast(key.len), c.SQLITE_STATIC)) {
-            std.debug.print("Couldn't bind key {s}\n", .{key});
-            return DBError.GenericError;
-        }
-        if (c.SQLITE_OK != c.sqlite3_bind_text(stmt, 3, value.ptr, @intCast(value.len), c.SQLITE_STATIC)) {
-            std.debug.print("Couldn't bind value {s}\n", .{value});
-            return DBError.GenericError;
-        }
-        const result = stmt.?;
-
-        const row = c.sqlite3_step(result);
-        if (c.SQLITE_DONE != row) {
-            std.debug.print("Step: {}: {s}\n", .{ row, c.sqlite3_errmsg(self.db) });
-            return DBError.GenericError;
-        }
-
-        if (c.SQLITE_OK != c.sqlite3_finalize(result)) {
-            std.debug.print("Couldn't finalize query {s}\n", .{key});
-            return DBError.GenericError;
-        }
+        const query = "INSERT INTO osm_tags (id, key, value) VALUES (NULL, ?1, ?2);";
+        try self.queryWithBindings(query, .{ key, value });
 
         const tag_id = c.sqlite3_last_insert_rowid(self.db);
 
         switch (parent) {
-            .Node => |node| try self.connect_osm_node_tag(node.id, tag_id),
-            else => {},
+            .Node => |node| {
+                const connect_query = "INSERT INTO osm_nodes_tags (node_id, tag_id) VALUES (?1, ?2);";
+                try self.queryWithBindings(connect_query, .{ node.id, tag_id });
+            },
+            .Way => |way| {
+                const connect_query = "INSERT INTO osm_ways_tags (way_id, tag_id) VALUES (?1, ?2);";
+                try self.queryWithBindings(connect_query, .{ way.id, tag_id });
+            },
+            else => {
+                std.debug.print("No tag implementation for parent {any}\n", .{parent});
+            },
         }
     }
 
+    pub fn insertOsmWay(self: DB, id: i64, visible: bool) !void {
+        const query = "INSERT INTO osm_ways (id, visible) VALUES (?1, ?2);";
+        try self.queryWithBindings(query, .{ id, visible });
+    }
+
     // TODO get associated tags
-    pub fn query_osm_nodes(self: DB, alloc: Allocator) ![]OSMNode {
+    pub fn queryOsmNodes(self: DB, alloc: Allocator) ![]OsmNode {
         const query = "SELECT * FROM osm_nodes";
         var stmt: ?*c.sqlite3_stmt = undefined;
         if (c.SQLITE_OK != c.sqlite3_prepare_v2(self.db, query, query.len + 1, &stmt, null)) {
@@ -202,7 +224,7 @@ pub const DB = struct {
         const result = stmt.?;
         defer _ = c.sqlite3_finalize(result);
 
-        var nodes = ArrayList(OSMNode).init(alloc);
+        var nodes = ArrayList(OsmNode).init(alloc);
 
         var rc = c.sqlite3_step(result);
         while (rc == c.SQLITE_ROW) {

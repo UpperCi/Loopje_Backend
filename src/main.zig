@@ -52,7 +52,7 @@ fn valueFromTag(key: []const u8, data: []const u8) ![]const u8 {
 }
 
 // FIXME actual errors when node can't be parsed
-fn getOSMNodeFromTag(data: []u8) !database.OSMNode {
+fn getOsmNodeFromTag(data: []u8) !database.OsmNode {
     const id_str = try valueFromTag("id", data);
     const lat_str = try valueFromTag("lat", data);
     const lon_str = try valueFromTag("lon", data);
@@ -64,14 +64,25 @@ fn getOSMNodeFromTag(data: []u8) !database.OSMNode {
     return .{ .id = id, .lat = lat, .lon = lon };
 }
 
-fn getOSMTagFromTag(data: []u8) !database.OSMTag {
+fn getOsmTagFromTag(data: []u8) !database.OsmTag {
     const key = try valueFromTag("k", data);
     const value = try valueFromTag("v", data);
 
     return .{ .key = key, .value = value };
 }
 
-fn parseOSM(db: database.DB, path: []const u8) void {
+fn getOsmWayFromTag(data: []u8) !database.OsmWay {
+    const visibility = try valueFromTag("visible", data);
+    const id_str = try valueFromTag("id", data);
+    const id = try std.fmt.parseInt(i64, id_str, 10);
+    if (visibility[0] == 't') {
+        return .{ .id = id, .visible = true };
+    } else {
+        return .{ .id = id, .visible = false };
+    }
+}
+
+fn parseOsm(db: database.DB, path: []const u8) void {
     const file = std.fs.cwd().openFile(path, .{}) catch unreachable;
     defer file.close();
     const meta = file.metadata() catch unreachable;
@@ -87,12 +98,12 @@ fn parseOSM(db: database.DB, path: []const u8) void {
     // current parser state
     var in_item = false;
     var escaped = false;
-    var parent: database.OSMEntry = .None;
+    var parent: database.OsmEntry = .None;
     var insertions: u64 = 0;
     const stdout = std.io.getStdOut().writer();
 
     // TODO: new transaction every N entries (1000000 seems fine)
-    db.start_transaction();
+    db.startTransaction();
 
     for (0..size) |i| {
         byte = in_stream.readByte() catch {
@@ -100,8 +111,8 @@ fn parseOSM(db: database.DB, path: []const u8) void {
         };
 
         if (insertions >= 500_000) {
-            db.end_transaction();
-            db.start_transaction();
+            db.endTransaction();
+            db.startTransaction();
             const percentage: f64 = @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(size));
             stdout.print("{any}/{any} ({d:.4}%)\n", .{ i, size, percentage * 100 }) catch {};
             insertions = 0;
@@ -114,22 +125,20 @@ fn parseOSM(db: database.DB, path: []const u8) void {
 
             if (!escaped and byte == '>') {
                 // Register new item
-                // Ignore, Node, Way, Tag, Nd, Relation
-                // TODO: seperate parsing and insertion; save parent
-                // E.g. getEntry(&item_buf, "ref") -> '123456' getEntry(&item_buf, "vis") -> 'true'
                 switch (item_buf[0]) {
                     '/' => { // end parent
                         parent = .None;
                     },
                     'w' => { // Way
+                        const way = getOsmWayFromTag(item_buf[0..]) catch unreachable;
+                        db.insertOsmWay(way.id, way.visible) catch {};
+                        insertions += 1;
+                        parent = .{ .Way = way };
                     },
                     't' => { // Tag
-                        const tag = getOSMTagFromTag(item_buf[0..]) catch unreachable;
-                        db.insert_osm_tag(parent, tag.key, tag.value) catch |err| {
-                            std.debug.print("{any} at: {s}\n", .{ err, item_buf });
-                        };
+                        const tag = getOsmTagFromTag(item_buf[0..]) catch unreachable;
+                        db.insertOsmTag(parent, tag.key, tag.value) catch {};
                         insertions += 1;
-                        parent = .{ .Tag = tag };
                     },
                     'r' => { // Relation
                     },
@@ -138,10 +147,8 @@ fn parseOSM(db: database.DB, path: []const u8) void {
                     'n' => { // Node or Nd
                         if (item_buf[1] == 'o') { // Node
                             // Error return trace
-                            const node = getOSMNodeFromTag(item_buf[0..]) catch unreachable;
-                            db.insert_osm_node(node.id, node.lat, node.lat) catch |err| {
-                                std.debug.print("{any} at: {s}\n", .{ err, item_buf });
-                            };
+                            const node = getOsmNodeFromTag(item_buf[0..]) catch unreachable;
+                            db.insertOsmNode(node.id, node.lat, node.lat) catch {};
                             insertions += 1;
                             parent = .{ .Node = node };
                         } else { // Nd, connects node and parent
@@ -163,7 +170,7 @@ fn parseOSM(db: database.DB, path: []const u8) void {
         }
     }
 
-    db.end_transaction();
+    db.endTransaction();
 }
 
 pub fn main() void {
@@ -175,11 +182,10 @@ pub fn main() void {
     defer db.deinit();
 
     std.debug.print("{}\n", .{db});
-    std.debug.print("{s} -> {!?s}\n", .{ "member=\"abc\" key=\"value\"", valueFromTag("key", "member=\"abc\" key=\"value\" ") });
 
     // No allocations during data insertion (besides internal SQLite allocations)
-    parseOSM(db, "roffa.osm");
-    // parseOSM(db, "netherlands-latest.osm");
+    parseOsm(db, "beurs.osm");
+    // parseOsm(db, "netherlands-latest.osm");
 
     // const nodes = db.query_osm_nodes(alloc) catch unreachable;
     // for (nodes) |n| {
@@ -188,5 +194,5 @@ pub fn main() void {
 }
 
 test "find duplicate dirs" {
-    parseOSM("beurs.osm");
+    parseOsm("beurs.osm");
 }
