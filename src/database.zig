@@ -56,13 +56,12 @@ pub const DB = struct {
                     \\      longitude double not null
                     \\  );
                     \\ create table if not exists osm_tags (
-                    \\      id integer primary key,
                     \\      key text not null,
                     \\      value text not null
                     \\ );
                     \\ create table if not exists osm_nodes_tags (
                     \\      node_id bigint unsigned,
-                    \\      tag_id integer
+                    \\      tag_id bigint
                     \\ );
                     \\ create table if not exists osm_ways (
                     \\      id bigint unsigned unique,
@@ -70,7 +69,11 @@ pub const DB = struct {
                     \\  );
                     \\ create table if not exists osm_ways_tags (
                     \\      way_id bigint unsigned,
-                    \\      tag_id integer
+                    \\      tag_id bigint
+                    \\ );
+                    \\ create table if not exists osm_nodes_ways (
+                    \\      way_id bigint unsigned,
+                    \\      node_id bigint unsigned
                     \\ );
                 ;
                 var errmsg: [*c]u8 = undefined;
@@ -188,7 +191,7 @@ pub const DB = struct {
             else => {},
         }
 
-        const query = "INSERT INTO osm_tags (id, key, value) VALUES (NULL, ?1, ?2);";
+        const query = "INSERT INTO osm_tags (key, value) VALUES (?1, ?2);";
         try self.queryWithBindings(query, .{ key, value });
 
         const tag_id = c.sqlite3_last_insert_rowid(self.db);
@@ -211,6 +214,18 @@ pub const DB = struct {
     pub fn insertOsmWay(self: DB, id: i64, visible: bool) !void {
         const query = "INSERT INTO osm_ways (id, visible) VALUES (?1, ?2);";
         try self.queryWithBindings(query, .{ id, visible });
+    }
+
+    pub fn insertOsmNd(self: DB, parent: OsmEntry, node_id: i64) !void {
+        switch (parent) {
+            .Way => |way| {
+                const query = "INSERT INTO osm_nodes_ways (way_id, node_id) VALUES (?1, ?2);";
+                try self.queryWithBindings(query, .{ way.id, node_id });
+            },
+            else => {
+                std.debug.print("No nd implementation for parent {any}\n", .{parent});
+            },
+        }
     }
 
     // TODO get associated tags

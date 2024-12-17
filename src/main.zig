@@ -82,6 +82,11 @@ fn getOsmWayFromTag(data: []u8) !database.OsmWay {
     }
 }
 
+fn getOsmNdIdFromTag(data: []u8) !i64 {
+    const id_str = try valueFromTag("ref", data);
+    return try std.fmt.parseInt(i64, id_str, 10);
+}
+
 fn parseOsm(db: database.DB, path: []const u8) void {
     const file = std.fs.cwd().openFile(path, .{}) catch unreachable;
     defer file.close();
@@ -152,9 +157,13 @@ fn parseOsm(db: database.DB, path: []const u8) void {
                             insertions += 1;
                             parent = .{ .Node = node };
                         } else { // Nd, connects node and parent
+                            const nd_id = getOsmNdIdFromTag(item_buf[0..]) catch unreachable;
+                            db.insertOsmNd(parent, nd_id) catch {};
+                            insertions += 1;
                         }
                     },
-                    else => {},
+                    else => { // Headers at the start of file
+                    },
                 }
                 in_item = false;
                 @memset(&item_buf, 0);
