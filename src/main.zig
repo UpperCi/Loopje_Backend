@@ -102,18 +102,21 @@ fn parseOsm(db: database.DB, path: []const u8) void {
 
     // current parser state
     var in_item = false;
-    var escaped = false;
     var parent: database.OsmEntry = .None;
     var insertions: u64 = 0;
     const stdout = std.io.getStdOut().writer();
 
-    // TODO: new transaction every N entries (1000000 seems fine)
     db.startTransaction();
+    // 11363070619
+    in_stream.skipBytes(11375795500, .{}) catch {};
 
     for (0..size) |i| {
         byte = in_stream.readByte() catch {
+            std.debug.print("No more bytes?\n", .{});
             break;
         };
+        stdout.writeByte(byte) catch {};
+        // std.debug.print(" - {}\n", .{i});
 
         if (insertions >= 500_000) {
             db.endTransaction();
@@ -124,12 +127,9 @@ fn parseOsm(db: database.DB, path: []const u8) void {
         }
 
         if (in_item) {
-            if (byte == '"' and item_buf[item_size - 1] != '\\') {
-                escaped = !escaped;
-            }
-
-            if (!escaped and byte == '>') {
+            if (byte == '>') {
                 // Register new item
+                std.debug.print("\nEND OF ITEM\n", .{});
                 switch (item_buf[0]) {
                     '/' => { // end parent
                         parent = .None;
@@ -175,6 +175,7 @@ fn parseOsm(db: database.DB, path: []const u8) void {
         } else {
             if (byte == '<') {
                 in_item = true;
+                std.debug.print("\nSTART OF ITEM\n", .{});
             }
         }
     }
@@ -193,8 +194,8 @@ pub fn main() void {
     std.debug.print("{}\n", .{db});
 
     // No allocations during data insertion (besides internal SQLite allocations)
-    parseOsm(db, "beurs.osm");
-    // parseOsm(db, "netherlands-latest.osm");
+    // parseOsm(db, "beurs.osm");
+    parseOsm(db, "netherlands-latest.osm");
 
     // const nodes = db.query_osm_nodes(alloc) catch unreachable;
     // for (nodes) |n| {

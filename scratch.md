@@ -1,3 +1,5 @@
+- Zig 0.13.0
+
 # Queries
 
 Get all nodes + connected tags
@@ -35,3 +37,15 @@ Navigation-relevant tags:
   - use_sidepath
 
 NOTE: should these be indexed upon insertion?
+
+# Pathfinding Procedure
+
+1. Load all nodes into memory.
+  - Query all nodes
+2. Graph all node connections.
+  1. Query all ways w nodes
+  2. Filter out non-traversable ways
+  3. Determine 'friction' of ways (based on road type)
+  4. Set weights based on node distance and way friction
+    - Add 'loudness' later
+3. Find shortest path between start and end node.
