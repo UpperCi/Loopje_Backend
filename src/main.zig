@@ -108,15 +108,13 @@ fn parseOsm(db: database.DB, path: []const u8) void {
 
     db.startTransaction();
     // 11363070619
-    in_stream.skipBytes(11375795500, .{}) catch {};
+    // in_stream.skipBytes(11375795500, .{}) catch {};
 
     for (0..size) |i| {
         byte = in_stream.readByte() catch {
             std.debug.print("No more bytes?\n", .{});
             break;
         };
-        stdout.writeByte(byte) catch {};
-        // std.debug.print(" - {}\n", .{i});
 
         if (insertions >= 500_000) {
             db.endTransaction();
@@ -129,7 +127,7 @@ fn parseOsm(db: database.DB, path: []const u8) void {
         if (in_item) {
             if (byte == '>') {
                 // Register new item
-                std.debug.print("\nEND OF ITEM\n", .{});
+                // TODO: if item is duplicate, set as parent
                 switch (item_buf[0]) {
                     '/' => { // end parent
                         parent = .None;
@@ -153,7 +151,7 @@ fn parseOsm(db: database.DB, path: []const u8) void {
                         if (item_buf[1] == 'o') { // Node
                             // Error return trace
                             const node = getOsmNodeFromTag(item_buf[0..]) catch unreachable;
-                            db.insertOsmNode(node.id, node.lat, node.lat) catch {};
+                            db.insertOsmNode(node.id, node.lat, node.lon) catch {};
                             insertions += 1;
                             parent = .{ .Node = node };
                         } else { // Nd, connects node and parent
@@ -175,7 +173,6 @@ fn parseOsm(db: database.DB, path: []const u8) void {
         } else {
             if (byte == '<') {
                 in_item = true;
-                std.debug.print("\nSTART OF ITEM\n", .{});
             }
         }
     }
@@ -194,13 +191,9 @@ pub fn main() void {
     std.debug.print("{}\n", .{db});
 
     // No allocations during data insertion (besides internal SQLite allocations)
-    // parseOsm(db, "beurs.osm");
-    parseOsm(db, "netherlands-latest.osm");
-
-    // const nodes = db.query_osm_nodes(alloc) catch unreachable;
-    // for (nodes) |n| {
-    //     std.debug.print("{}\n", .{n});
-    // }
+    parseOsm(db, "beurs.osm");
+    // parseOsm(db, "roffa.osm");
+    // parseOsm(db, "zuid-holland-latest.osm");
 }
 
 test "find duplicate dirs" {

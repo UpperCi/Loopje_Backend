@@ -75,6 +75,9 @@ pub const DB = struct {
                     \\      way_id bigint unsigned,
                     \\      node_id bigint unsigned
                     \\ );
+                    \\ 
+                    \\ create index idx_coords on osm_nodes(latitude, longitude);
+                    // 12.8 secs without index
                 ;
                 var errmsg: [*c]u8 = undefined;
                 if (c.SQLITE_OK != c.sqlite3_exec(db, init_db_query, null, null, &errmsg)) {

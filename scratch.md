@@ -4,9 +4,18 @@
 
 Get all nodes + connected tags
 ```sql
-SELECT osm_nodes.id, osm_nodes.latitude, osm_nodes.longitude, osm_tags.key, osm_tags.value, FROM osm_nodes
+SELECT osm_nodes.id, osm_nodes.latitude, osm_nodes.longitude, osm_tags.key, osm_tags.value FROM osm_nodes
   LEFT JOIN osm_nodes_tags ON osm_nodes.id=osm_nodes_tags.node_id
   LEFT JOIN osm_tags ON osm_nodes_tags.tag_id=osm_tags.rowid
+  ;
+```
+
+Get nodes in area
+```sql
+SELECT osm_nodes.id, osm_nodes.latitude, osm_nodes.longitude, osm_tags.key, osm_tags.value FROM osm_nodes
+  LEFT JOIN osm_nodes_tags ON osm_nodes.id=osm_nodes_tags.node_id
+  LEFT JOIN osm_tags ON osm_nodes_tags.tag_id=osm_tags.rowid
+  WHERE osm_nodes.latitude > 51.922647 AND osm_nodes.latitude < 51.925558 AND osm_nodes.longitude > 4.474488 AND osm_nodes.longitude < 4.48291
   ;
 ```
 
@@ -18,7 +27,11 @@ SELECT osm_ways.id, osm_tags.key, osm_tags.value FROM osm_ways
   ;
 ```
 
-# Ways
+## Database
+
+- Sqlite needs to keep all data in-memory
+
+## Ways
 
 - Connected nodes chart path
 
@@ -42,10 +55,13 @@ NOTE: should these be indexed upon insertion?
 
 1. Load all nodes into memory.
   - Query all nodes
-2. Graph all node connections.
-  1. Query all ways w nodes
+2. Graph all edges.
+  1. Query all ways w their nodes
   2. Filter out non-traversable ways
   3. Determine 'friction' of ways (based on road type)
   4. Set weights based on node distance and way friction
     - Add 'loudness' later
+  5. Remove non-intersections from map
 3. Find shortest path between start and end node.
+  - Maybe easier to do while evaluating instead of at graph creation
+
