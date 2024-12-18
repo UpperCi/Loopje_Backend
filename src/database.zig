@@ -55,13 +55,10 @@ pub const DB = struct {
                     \\      latitude double not null,
                     \\      longitude double not null
                     \\  );
-                    \\ create table if not exists osm_tags (
-                    \\      key text not null,
-                    \\      value text not null
-                    \\ );
                     \\ create table if not exists osm_nodes_tags (
                     \\      node_id bigint unsigned,
-                    \\      tag_id bigint
+                    \\      key text not null,
+                    \\      value text not null
                     \\ );
                     \\ create table if not exists osm_ways (
                     \\      id bigint unsigned unique,
@@ -69,7 +66,8 @@ pub const DB = struct {
                     \\  );
                     \\ create table if not exists osm_ways_tags (
                     \\      way_id bigint unsigned,
-                    \\      tag_id bigint
+                    \\      key text not null,
+                    \\      value text not null
                     \\ );
                     \\ create table if not exists osm_nodes_ways (
                     \\      way_id bigint unsigned,
@@ -78,6 +76,7 @@ pub const DB = struct {
                     \\ 
                     \\ create index idx_coords on osm_nodes(latitude, longitude);
                     // 12.8 secs without index
+                    // 11.5 with...
                 ;
                 var errmsg: [*c]u8 = undefined;
                 if (c.SQLITE_OK != c.sqlite3_exec(db, init_db_query, null, null, &errmsg)) {
@@ -190,24 +189,15 @@ pub const DB = struct {
 
     pub fn insertOsmTag(self: DB, parent: OsmEntry, key: []const u8, value: []const u8) !void {
         switch (parent) {
-            .None => return,
-            else => {},
-        }
-
-        const query = "INSERT INTO osm_tags (key, value) VALUES (?1, ?2);";
-        try self.queryWithBindings(query, .{ key, value });
-
-        const tag_id = c.sqlite3_last_insert_rowid(self.db);
-
-        switch (parent) {
             .Node => |node| {
-                const connect_query = "INSERT INTO osm_nodes_tags (node_id, tag_id) VALUES (?1, ?2);";
-                try self.queryWithBindings(connect_query, .{ node.id, tag_id });
+                const connect_query = "INSERT INTO osm_nodes_tags (node_id, key, value) VALUES (?1, ?2, ?3);";
+                try self.queryWithBindings(connect_query, .{ node.id, key, value });
             },
             .Way => |way| {
-                const connect_query = "INSERT INTO osm_ways_tags (way_id, tag_id) VALUES (?1, ?2);";
-                try self.queryWithBindings(connect_query, .{ way.id, tag_id });
+                const connect_query = "INSERT INTO osm_ways_tags (way_id, key, value) VALUES (?1, ?2, ?3);";
+                try self.queryWithBindings(connect_query, .{ way.id, key, value });
             },
+            .None => {},
             else => {
                 std.debug.print("No tag implementation for parent {any}\n", .{parent});
             },
@@ -258,3 +248,14 @@ pub const DB = struct {
         return nodes_slice;
     }
 };
+
+test "find duplicate dirs" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const db = DB.init(alloc, "osm") catch unreachable;
+    defer db.deinit();
+
+    db.insertOsmNode(1, 0, 0) catch {};
+}

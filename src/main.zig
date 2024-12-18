@@ -1,7 +1,7 @@
 const std = @import("std");
 const database = @import("database.zig");
-const expect = std.testing.expect;
-const assert = std.testing.assert;
+const expect = std.debug.expect;
+const assert = std.debug.assert;
 const eql = std.mem.eql;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
@@ -127,7 +127,6 @@ fn parseOsm(db: database.DB, path: []const u8) void {
         if (in_item) {
             if (byte == '>') {
                 // Register new item
-                // TODO: if item is duplicate, set as parent
                 switch (item_buf[0]) {
                     '/' => { // end parent
                         parent = .None;
@@ -154,13 +153,16 @@ fn parseOsm(db: database.DB, path: []const u8) void {
                             db.insertOsmNode(node.id, node.lat, node.lon) catch {};
                             insertions += 1;
                             parent = .{ .Node = node };
-                        } else { // Nd, connects node and parent
+                        } else { // Nd, connects node to way
+                            assert(parent == .Way);
                             const nd_id = getOsmNdIdFromTag(item_buf[0..]) catch unreachable;
                             db.insertOsmNd(parent, nd_id) catch {};
                             insertions += 1;
                         }
                     },
-                    else => { // Headers at the start of file
+                    else => { // Headers & metadata
+                        // should only happen at the start of the file
+                        assert(i < 1_000);
                     },
                 }
                 in_item = false;
@@ -194,8 +196,4 @@ pub fn main() void {
     parseOsm(db, "beurs.osm");
     // parseOsm(db, "roffa.osm");
     // parseOsm(db, "zuid-holland-latest.osm");
-}
-
-test "find duplicate dirs" {
-    parseOsm("beurs.osm");
 }

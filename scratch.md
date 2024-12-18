@@ -4,26 +4,25 @@
 
 Get all nodes + connected tags
 ```sql
-SELECT osm_nodes.id, osm_nodes.latitude, osm_nodes.longitude, osm_tags.key, osm_tags.value FROM osm_nodes
+SELECT osm_nodes.id, osm_nodes.latitude, osm_nodes.longitude, osm_nodes_tags.key, osm_nodes_tags.value FROM osm_nodes
   LEFT JOIN osm_nodes_tags ON osm_nodes.id=osm_nodes_tags.node_id
-  LEFT JOIN osm_tags ON osm_nodes_tags.tag_id=osm_tags.rowid
   ;
 ```
 
 Get nodes in area
 ```sql
-SELECT osm_nodes.id, osm_nodes.latitude, osm_nodes.longitude, osm_tags.key, osm_tags.value FROM osm_nodes
+SELECT osm_nodes.id, osm_nodes.latitude, osm_nodes.longitude, osm_nodes_tags.key, osm_nodes_tags.value FROM osm_nodes
   LEFT JOIN osm_nodes_tags ON osm_nodes.id=osm_nodes_tags.node_id
-  LEFT JOIN osm_tags ON osm_nodes_tags.tag_id=osm_tags.rowid
   WHERE osm_nodes.latitude > 51.922647 AND osm_nodes.latitude < 51.925558 AND osm_nodes.longitude > 4.474488 AND osm_nodes.longitude < 4.48291
   ;
 ```
+With SQLite, this takes 11.5 seconds on "zuid-holland-latest.osm"
+14 seconds with simplified tags...
 
 Get all ways + connected tags
 ```sql
-SELECT osm_ways.id, osm_tags.key, osm_tags.value FROM osm_ways
+SELECT osm_ways.id, osm_ways_tags.key, osm_ways_tags.value FROM osm_ways
   LEFT JOIN osm_ways_tags ON osm_ways.id=osm_ways_tags.way_id
-  LEFT JOIN osm_tags ON osm_ways_tags.tag_id=osm_tags.rowid
   ;
 ```
 
