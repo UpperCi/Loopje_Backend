@@ -11,10 +11,10 @@ pub const OsmNode = struct {
 };
 
 pub const Branch = struct {
-    nw: *TreeNode, // North-West
-    ne: *TreeNode, // North-East
-    sw: *TreeNode, // South-West
-    se: *TreeNode, // South-East
+    nw: *TreeNode, // north-West
+    ne: *TreeNode, // north-East
+    sw: *TreeNode, // south-West
+    se: *TreeNode, // south-East
     split_lat: f64,
     split_lon: f64,
 };
@@ -38,6 +38,146 @@ pub const TreeNode = union(TreeNodeType) {
                 try writer.print("Leaf({} items)", .{leaf.items.len});
             },
         }
+    }
+
+    //
+    pub fn insertIntoTree(self: *TreeNode, allocator: Allocator, node: OsmNode) !void {
+        var parent = self;
+
+        while (true) {
+            switch (parent.*) {
+                //
+                .LeafNode => |leaf| { // TODO: this should be when the actual nodes are read
+                    if (leaf.items.len < 64) {
+                        try parent.LeafNode.append(node);
+                        return;
+                    } else { // leaf is full, divide it into 4 areas
+                        assert(leaf.items.len == 64);
+                        // find average lat & lon, determines where to split
+                        var lat_total: f64 = 0;
+                        var lon_total: f64 = 0;
+                        for (leaf.items) |item| {
+                            lat_total += item.lat;
+                            lon_total += item.lon;
+                        }
+                        const lat_avg = lat_total / 64;
+                        const lon_avg = lon_total / 64;
+
+                        // heap-allocate 4 leaf nodes
+                        var leaves = try allocator.alloc(TreeNode, 4);
+                        leaves[0] = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
+                        leaves[1] = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
+                        leaves[2] = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
+                        leaves[3] = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
+                        var leaf_ne = &leaves[0];
+                        var leaf_nw = &leaves[1];
+                        var leaf_se = &leaves[2];
+                        var leaf_sw = &leaves[3];
+
+                        // push nodes into relevant leaves
+                        for (leaf.items) |item| {
+                            if (item.lat > lat_avg) { // north
+                                if (item.lon > lon_avg) { // east
+                                    try leaf_ne.LeafNode.append(item);
+                                } else { // west
+                                    try leaf_nw.LeafNode.append(item);
+                                }
+                            } else { // south
+                                if (item.lon > lon_avg) { // east
+                                    try leaf_se.LeafNode.append(item);
+                                } else { // west
+                                    try leaf_sw.LeafNode.append(item);
+                                }
+                            }
+                        }
+                        assert(leaf_ne.LeafNode.items.len <= 64);
+                        assert(leaf_nw.LeafNode.items.len <= 64);
+                        assert(leaf_se.LeafNode.items.len <= 64);
+                        assert(leaf_sw.LeafNode.items.len <= 64);
+
+                        // replace self with a branch node, has previously created leaves as children
+                        parent.LeafNode.deinit();
+                        parent.* = .{ .BranchNode = .{
+                            .ne = leaf_ne,
+                            .nw = leaf_nw,
+                            .se = leaf_se,
+                            .sw = leaf_sw,
+                            .split_lat = lat_avg,
+                            .split_lon = lon_avg,
+                        } };
+                        return;
+                    }
+                },
+                // find which area the node fits into, set is as parents for next search
+                .BranchNode => |branch| {
+                    if (node.lat > branch.split_lat) { // north
+                        if (node.lon > branch.split_lon) { // east
+                            parent = branch.ne;
+                        } else { // west
+                            parent = branch.nw;
+                        }
+                    } else { // south
+                        if (node.lon > branch.split_lon) { // east
+                            parent = branch.se;
+                        } else { // west
+                            parent = branch.sw;
+                        }
+                    }
+                },
+            }
+        }
+    }
+
+    pub fn getInArea(self: *TreeNode, allocator: Allocator, north: f64, east: f64, south: f64, west: f64) !void {
+        // Because an area can span multiple leaves, keep a stack of all branches to traverse
+        var branches = ArrayList(*TreeNode).init(allocator);
+        var nodes = ArrayList(OsmNode).init(allocator);
+        var parent: ?(*TreeNode) = self;
+        while (parent != null) {
+            switch (parent.?.*) {
+                .LeafNode => |leaf| {
+                    // PERF: If leaf is fully enclosed in area, skip per-node if-statements
+                    //     Fully enclosed when it has traversed all four directions at some point
+                    //     E.g. root -> NE -> NW -> SE -> SE -> SW
+                    for (leaf.items) |node| {
+                        // append all nodes within given area
+                        const within_north = node.lat < north;
+                        const within_south = node.lat > south;
+                        const within_west = node.lon > west;
+                        const within_east = node.lon < east;
+                        if (within_north and within_south and within_west and within_east) {
+                            try nodes.append(node);
+                        }
+                    }
+                },
+                .BranchNode => |branch| {
+                    // add all branches that touch the given area
+                    // can append 1, 2 or 4 branches
+                    if (north > branch.split_lat) { // north
+                        if (east > branch.split_lon) { // east
+                            try branches.append(branch.ne);
+                            std.debug.print("append NE\n", .{});
+                        }
+                        if (west < branch.split_lon) { // west
+                            try branches.append(branch.nw);
+                            std.debug.print("append NW\n", .{});
+                        }
+                    }
+                    if (south < branch.split_lat) { // south
+                        if (east > branch.split_lon) { // east
+                            try branches.append(branch.se);
+                            std.debug.print("append SE\n", .{});
+                        }
+                        if (west < branch.split_lon) { // west
+                            try branches.append(branch.sw);
+                            std.debug.print("append SW\n", .{});
+                        }
+                    }
+                },
+            }
+            parent = branches.popOrNull();
+        }
+        std.debug.print("Nodes: {}\n", .{nodes.items.len});
     }
 };
 
@@ -67,99 +207,6 @@ pub fn deserializeOsmNode(buffer: []const u8) OsmNode {
     };
 }
 
-pub fn insertIntoTreeNode(allocator: Allocator, node: OsmNode, root: *TreeNode) void {
-    // stack of nodes
-    // index of current child?
-    //     or could u push all children to the stack at once?
-    //     would u need a stack? U will end up at one node anyway
-    var parent = root;
-    // breaks when NW child is split (second split)
-    // std.debug.print("Node: {}\n\n", .{root});
-    while (true) {
-        switch (parent.*) {
-            //
-            .LeafNode => |leaf| { // TODO: this should be when the actual nodes are read
-                if (leaf.items.len < 64) {
-                    parent.LeafNode.append(node) catch unreachable;
-                    return;
-                } else { // subdivide
-                    // Get average lat & lon
-                    var lat_total: f64 = 0;
-                    var lon_total: f64 = 0;
-                    for (leaf.items) |item| {
-                        lat_total += item.lat;
-                        lon_total += item.lon;
-                    }
-                    const lat_avg = lat_total / 64;
-                    const lon_avg = lon_total / 64;
-
-                    // Alloc 4 Leaf Nodes
-                    var leaves = allocator.alloc(TreeNode, 4) catch unreachable;
-                    leaves[0] = .{ .LeafNode = ArrayList(OsmNode).init(allocator) }; // ne
-                    leaves[1] = .{ .LeafNode = ArrayList(OsmNode).init(allocator) }; // nw
-                    leaves[2] = .{ .LeafNode = ArrayList(OsmNode).init(allocator) }; // se
-                    leaves[3] = .{ .LeafNode = ArrayList(OsmNode).init(allocator) }; // sw
-                    var leaf_ne = &leaves[0];
-                    var leaf_nw = &leaves[1];
-                    var leaf_se = &leaves[2];
-                    var leaf_sw = &leaves[3];
-
-                    // Push children into relevant leaves
-                    for (leaf.items) |item| {
-                        if (item.lat > lat_avg) { // north
-                            if (item.lon > lon_avg) { // east
-                                std.debug.print("Append North-East\n", .{});
-                                leaf_ne.LeafNode.append(item) catch unreachable;
-                            } else { // west
-                                leaf_nw.LeafNode.append(item) catch unreachable;
-                            }
-                        } else { // south
-                            if (item.lon > lon_avg) { // east
-                                leaf_se.LeafNode.append(item) catch unreachable;
-                            } else { // west
-                                std.debug.print("Append South-West\n", .{});
-                                leaf_sw.LeafNode.append(item) catch unreachable;
-                            }
-                        }
-                    }
-
-                    // Set self to branch node
-                    parent.LeafNode.deinit();
-                    parent.* = .{ .BranchNode = .{
-                        .ne = leaf_ne,
-                        .nw = leaf_nw,
-                        .se = leaf_se,
-                        .sw = leaf_sw,
-                        .split_lat = lat_avg,
-                        .split_lon = lon_avg,
-                    } };
-                    std.debug.print("New branch: {}\n", .{parent});
-                    return;
-                }
-            },
-            // check for closest leaf, then recurse with it
-            // split_lat: f64,
-            // split_lon: f64,
-            .BranchNode => |branch| {
-                // crashes here because one of the branches segfaults
-                if (node.lat > branch.split_lat) { // north
-                    if (node.lon > branch.split_lon) { // east
-                        parent = branch.ne;
-                    } else { // west
-                        parent = branch.nw;
-                    }
-                } else { // south
-                    if (node.lon > branch.split_lon) { // east
-                        parent = branch.se;
-                    } else { // west
-                        parent = branch.sw;
-                    }
-                }
-            },
-        }
-    }
-}
-
 test "serialize node" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -183,29 +230,19 @@ test "construct quadtree from slice of nodes" {
 
     var root: TreeNode = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
 
-    for (0..100) |i| {
-        const node_a = .{
-            .id = @as(i64, @intCast(i)),
-            .lat = @as(f64, @floatFromInt(i)),
-            .lon = 100 - @as(f64, @floatFromInt(i)),
-        };
-        insertIntoTreeNode(allocator, node_a, &root);
+    var prng = std.rand.DefaultPrng.init(2);
+    const rand = prng.random();
 
-        const node_b = .{
+    for (0..4096) |i| {
+        const node = .{
             .id = @as(i64, @intCast(i)),
-            .lat = 100 - @as(f64, @floatFromInt(i)),
-            .lon = @as(f64, @floatFromInt(i)),
+            .lat = rand.float(f64) * 100,
+            .lon = rand.float(f64) * 100,
         };
-        insertIntoTreeNode(allocator, node_b, &root);
+        try root.insertIntoTree(allocator, node);
     }
 
     std.debug.print("RESULT: {}\n", .{root});
+
+    try root.getInArea(allocator, 50, 50, 0, 0);
 }
-
-// test "find duplicate dirs" {
-
-//     const db = DB.init(alloc, "osm") catch unreachable;
-//     defer db.deinit();
-
-//     db.insertOsmNode(1, 0, 0) catch {};
-// }
