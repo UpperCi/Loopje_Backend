@@ -10,6 +10,8 @@ pub const OsmNode = struct {
     ways: []u64 = &.{},
 };
 
+const leaf_capacity = 64;
+
 pub const Branch = struct {
     nw: *TreeNode, // north-West
     ne: *TreeNode, // north-East
@@ -48,11 +50,11 @@ pub const TreeNode = union(TreeNodeType) {
             switch (parent.*) {
                 //
                 .LeafNode => |leaf| { // TODO: this should be when the actual nodes are read
-                    if (leaf.items.len < 64) {
+                    if (leaf.items.len < leaf_capacity) {
                         try parent.LeafNode.append(node);
                         return;
                     } else { // leaf is full, divide it into 4 areas
-                        assert(leaf.items.len == 64);
+                        assert(leaf.items.len == leaf_capacity);
                         // find average lat & lon, determines where to split
                         var lat_total: f64 = 0;
                         var lon_total: f64 = 0;
@@ -60,8 +62,8 @@ pub const TreeNode = union(TreeNodeType) {
                             lat_total += item.lat;
                             lon_total += item.lon;
                         }
-                        const lat_avg = lat_total / 64;
-                        const lon_avg = lon_total / 64;
+                        const lat_avg = lat_total / leaf_capacity;
+                        const lon_avg = lon_total / leaf_capacity;
 
                         // heap-allocate 4 leaf nodes
                         var leaves = try allocator.alloc(TreeNode, 4);
@@ -90,10 +92,10 @@ pub const TreeNode = union(TreeNodeType) {
                                 }
                             }
                         }
-                        assert(leaf_ne.LeafNode.items.len <= 64);
-                        assert(leaf_nw.LeafNode.items.len <= 64);
-                        assert(leaf_se.LeafNode.items.len <= 64);
-                        assert(leaf_sw.LeafNode.items.len <= 64);
+                        assert(leaf_ne.LeafNode.items.len <= leaf_capacity);
+                        assert(leaf_nw.LeafNode.items.len <= leaf_capacity);
+                        assert(leaf_se.LeafNode.items.len <= leaf_capacity);
+                        assert(leaf_sw.LeafNode.items.len <= leaf_capacity);
 
                         // replace self with a branch node, has previously created leaves as children
                         parent.LeafNode.deinit();
@@ -156,28 +158,23 @@ pub const TreeNode = union(TreeNodeType) {
                     if (north > branch.split_lat) { // north
                         if (east > branch.split_lon) { // east
                             try branches.append(branch.ne);
-                            std.debug.print("append NE\n", .{});
                         }
                         if (west < branch.split_lon) { // west
                             try branches.append(branch.nw);
-                            std.debug.print("append NW\n", .{});
                         }
                     }
                     if (south < branch.split_lat) { // south
                         if (east > branch.split_lon) { // east
                             try branches.append(branch.se);
-                            std.debug.print("append SE\n", .{});
                         }
                         if (west < branch.split_lon) { // west
                             try branches.append(branch.sw);
-                            std.debug.print("append SW\n", .{});
                         }
                     }
                 },
             }
             parent = branches.popOrNull();
         }
-        std.debug.print("Nodes: {}\n", .{nodes.items.len});
     }
 };
 
@@ -215,12 +212,17 @@ test "serialize node" {
     const node: OsmNode = .{
         .id = 66400,
         .lat = 40.0,
-        .lon = -320.023,
+        .lon = -321.123,
     };
 
     const serialized = serializeOsmNode(alloc, node);
 
     assert(deserializeValue(i64, serialized, 0) == 66400);
+    // floats are asserted to be roughly equal
+    assert(deserializeValue(f64, serialized, 8) > 39);
+    assert(deserializeValue(f64, serialized, 8) < 41);
+    assert(deserializeValue(f64, serialized, 16) > -323);
+    assert(deserializeValue(f64, serialized, 16) < -320);
 }
 
 test "construct quadtree from slice of nodes" {
@@ -242,7 +244,7 @@ test "construct quadtree from slice of nodes" {
         try root.insertIntoTree(allocator, node);
     }
 
-    std.debug.print("RESULT: {}\n", .{root});
+    std.debug.print("Searching...\n", .{});
 
     try root.getInArea(allocator, 50, 50, 0, 0);
 }
