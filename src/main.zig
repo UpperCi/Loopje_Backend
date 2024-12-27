@@ -1,6 +1,5 @@
 const std = @import("std");
 const database = @import("database.zig");
-const expect = std.debug.expect;
 const assert = std.debug.assert;
 const eql = std.mem.eql;
 const Allocator = std.mem.Allocator;
@@ -8,7 +7,7 @@ const ArrayList = std.ArrayList;
 
 // longest line is 341 chars
 
-const ReadValueError = error.ValueNotFound;
+const ReadValueError = error.KeyNotFound;
 
 const InsertItemError = error{
     Overflow,
@@ -48,7 +47,8 @@ fn valueFromTag(key: []const u8, data: []const u8) ![]const u8 {
             }
         }
     }
-    return error.ValueNotFound;
+
+    return error.KeyNotFound;
 }
 
 // FIXME actual errors when node can't be parsed
@@ -78,6 +78,7 @@ fn getOsmWayFromTag(data: []u8) !database.OsmWay {
     if (visibility[0] == 't') {
         return .{ .id = id, .visible = true };
     } else {
+        assert(visibility[0] == 'f');
         return .{ .id = id, .visible = false };
     }
 }
@@ -112,11 +113,11 @@ fn parseOsm(db: database.DB, path: []const u8) void {
 
     for (0..size) |i| {
         byte = in_stream.readByte() catch {
-            std.debug.print("No more bytes?\n", .{});
             break;
         };
 
         if (insertions >= 500_000) {
+            assert(!in_item);
             db.endTransaction();
             db.startTransaction();
             const percentage: f64 = @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(size));
@@ -178,6 +179,7 @@ fn parseOsm(db: database.DB, path: []const u8) void {
             }
         }
     }
+    assert(!in_item);
 
     db.endTransaction();
 }

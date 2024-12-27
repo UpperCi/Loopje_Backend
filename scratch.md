@@ -30,6 +30,39 @@ SELECT osm_ways.id, osm_ways_tags.key, osm_ways_tags.value FROM osm_ways
 
 - Sqlite needs to keep all data in-memory
 
+## Quadtree
+
+Stored in two files
+- Structure file describes all branches
+- Datafile actually stores the nodes
+
+When a query is made, only load in structure file. Datafile can be read when the nodes are actually needed.
+
+To allow for tight packing of nodes and tags, without reordering the whole file at every write, some algorithm needs to manage memory and such.
+
+Static node size? Could store tags & ways somewhere else.
+
+### Structurestore
+
+Bytes:
+
+Branch 0 (1-4)   Leaf 1    Leaf 2    
+ABBBBBBBBCCCCCCCCADEEEEEEEEADEEEEEEEE
+Branch 3 (5-8)   Leaf 5    Leaf 6    Leaf 7    Leaf 8    
+ABBBBBBBBCCCCCCCCADEEEEEEEEADEEEEEEEEADEEEEEEEEADEEEEEEEE
+Leaf 4 (from branch 0 still)
+ADEEEEEEEE
+
+A - Node type
+B - latitude split
+C - longitude split
+D - OsmNode count within leaf
+E - index of OSM Nodes within datafile
+
+If node is of type branch, it's children are pushed to a filo stack.
+
+This structure is compact, but is hard to load partially.
+
 ## Ways
 
 - Connected nodes chart path
