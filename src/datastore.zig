@@ -10,15 +10,19 @@ pub const OsmNode = struct {
     ways: []u64 = &.{},
 };
 
-const leaf_capacity = 64;
-
 pub const Branch = struct {
-    nw: *TreeNode, // north-West
-    ne: *TreeNode, // north-East
-    sw: *TreeNode, // south-West
-    se: *TreeNode, // south-East
+    nw: *TreeNode, // north-west
+    ne: *TreeNode, // north-east
+    sw: *TreeNode, // south-west
+    se: *TreeNode, // south-east
     split_lat: f64,
     split_lon: f64,
+};
+
+const leaf_capacity = 64;
+
+pub const QueryError = error{
+    NotFound,
 };
 
 pub const TreeNodeType = enum { BranchNode, LeafNode };
@@ -34,7 +38,17 @@ pub const TreeNode = union(TreeNodeType) {
     ) !void {
         switch (self) {
             .BranchNode => |branch| {
-                try writer.print("Branch(split: ({}, {}), children: [NE: {}, NW: {}, SE: {}, SW: {}])", .{ branch.split_lat, branch.split_lon, branch.ne, branch.nw, branch.se, branch.sw });
+                try writer.print(
+                    "Branch(split: ({}, {}), children: [NE: {}, NW: {}, SE: {}, SW: {}])",
+                    .{
+                        branch.split_lat,
+                        branch.split_lon,
+                        branch.ne,
+                        branch.nw,
+                        branch.se,
+                        branch.sw,
+                    },
+                );
             },
             .LeafNode => |leaf| {
                 try writer.print("Leaf({} items)", .{leaf.items.len});
@@ -42,19 +56,34 @@ pub const TreeNode = union(TreeNodeType) {
         }
     }
 
-    //
     pub fn insertIntoTree(self: *TreeNode, allocator: Allocator, node: OsmNode) !void {
         var parent = self;
 
         while (true) {
             switch (parent.*) {
-                //
-                .LeafNode => |leaf| { // TODO: this should be when the actual nodes are read
+                // find which area the node fits into, set it as parent for next search
+                .BranchNode => |branch| {
+                    if (node.lat > branch.split_lat) { // north
+                        if (node.lon > branch.split_lon) { // east
+                            parent = branch.ne;
+                        } else { // west
+                            parent = branch.nw;
+                        }
+                    } else { // south
+                        if (node.lon > branch.split_lon) { // east
+                            parent = branch.se;
+                        } else { // west
+                            parent = branch.sw;
+                        }
+                    }
+                },
+                .LeafNode => |leaf| {
                     if (leaf.items.len < leaf_capacity) {
                         try parent.LeafNode.append(node);
                         return;
                     } else { // leaf is full, divide it into 4 areas
                         assert(leaf.items.len == leaf_capacity);
+                        try parent.LeafNode.append(node);
                         // find average lat & lon, determines where to split
                         var lat_total: f64 = 0;
                         var lon_total: f64 = 0;
@@ -76,8 +105,10 @@ pub const TreeNode = union(TreeNodeType) {
                         var leaf_se = &leaves[2];
                         var leaf_sw = &leaves[3];
 
+                        // insert current node as well
+
                         // push nodes into relevant leaves
-                        for (leaf.items) |item| {
+                        for (parent.LeafNode.items) |item| {
                             if (item.lat > lat_avg) { // north
                                 if (item.lon > lon_avg) { // east
                                     try leaf_ne.LeafNode.append(item);
@@ -110,48 +141,24 @@ pub const TreeNode = union(TreeNodeType) {
                         return;
                     }
                 },
-                // find which area the node fits into, set is as parents for next search
-                .BranchNode => |branch| {
-                    if (node.lat > branch.split_lat) { // north
-                        if (node.lon > branch.split_lon) { // east
-                            parent = branch.ne;
-                        } else { // west
-                            parent = branch.nw;
-                        }
-                    } else { // south
-                        if (node.lon > branch.split_lon) { // east
-                            parent = branch.se;
-                        } else { // west
-                            parent = branch.sw;
-                        }
-                    }
-                },
             }
         }
     }
 
-    pub fn getInArea(self: *TreeNode, allocator: Allocator, north: f64, east: f64, south: f64, west: f64) !void {
+    pub fn getInArea(
+        self: *TreeNode,
+        allocator: Allocator,
+        north: f64,
+        east: f64,
+        south: f64,
+        west: f64,
+    ) !void {
         // Because an area can span multiple leaves, keep a stack of all branches to traverse
-        var branches = ArrayList(*TreeNode).init(allocator);
         var nodes = ArrayList(OsmNode).init(allocator);
+        var branches = ArrayList(*TreeNode).init(allocator);
         var parent: ?(*TreeNode) = self;
         while (parent != null) {
             switch (parent.?.*) {
-                .LeafNode => |leaf| {
-                    // PERF: If leaf is fully enclosed in area, skip per-node if-statements
-                    //     Fully enclosed when it has traversed all four directions at some point
-                    //     E.g. root -> NE -> NW -> SE -> SE -> SW
-                    for (leaf.items) |node| {
-                        // append all nodes within given area
-                        const within_north = node.lat < north;
-                        const within_south = node.lat > south;
-                        const within_west = node.lon > west;
-                        const within_east = node.lon < east;
-                        if (within_north and within_south and within_west and within_east) {
-                            try nodes.append(node);
-                        }
-                    }
-                },
                 .BranchNode => |branch| {
                     // add all branches that touch the given area
                     // can append 1, 2 or 4 branches
@@ -172,9 +179,49 @@ pub const TreeNode = union(TreeNodeType) {
                         }
                     }
                 },
+                .LeafNode => |leaf| {
+                    // PERF: If leaf is fully enclosed in area, skip per-node if-statements
+                    //     Fully enclosed when it has traversed all four directions at some point
+                    //     E.g. root -> NE -> NW -> SE -> SE -> SW
+                    for (leaf.items) |node| {
+                        // append all nodes within given area
+                        const within_north = node.lat < north;
+                        const within_south = node.lat > south;
+                        const within_west = node.lon > west;
+                        const within_east = node.lon < east;
+                        if (within_north and within_south and within_west and within_east) {
+                            try nodes.append(node);
+                        }
+                    }
+                },
             }
             parent = branches.popOrNull();
         }
+    }
+
+    // just searches all nodes in all leaves
+    pub fn getById(self: *const TreeNode, allocator: Allocator, id: i64) !OsmNode {
+        var branches = ArrayList(*TreeNode).init(allocator);
+        var parent: ?(*const TreeNode) = self;
+        while (parent != null) {
+            switch (parent.?.*) {
+                .BranchNode => |branch| {
+                    try branches.append(branch.ne);
+                    try branches.append(branch.nw);
+                    try branches.append(branch.se);
+                    try branches.append(branch.sw);
+                },
+                .LeafNode => |leaf| {
+                    for (leaf.items) |node| {
+                        if (node.id == id) {
+                            return node;
+                        }
+                    }
+                },
+            }
+            parent = branches.popOrNull();
+        }
+        return QueryError.NotFound;
     }
 };
 
@@ -235,7 +282,7 @@ test "construct quadtree from slice of nodes" {
     var prng = std.rand.DefaultPrng.init(2);
     const rand = prng.random();
 
-    for (0..4096) |i| {
+    for (0..1000) |i| {
         const node = .{
             .id = @as(i64, @intCast(i)),
             .lat = rand.float(f64) * 100,
@@ -243,6 +290,16 @@ test "construct quadtree from slice of nodes" {
         };
         try root.insertIntoTree(allocator, node);
     }
+
+    const start = std.time.milliTimestamp();
+    for (0..1000) |i| {
+        // takes 7ms per million active nodes
+        _ = root.getById(allocator, @as(i64, @intCast(i))) catch {
+            std.debug.print("Err: {}\n", .{i});
+        };
+    }
+    const end = std.time.milliTimestamp();
+    std.debug.print("Millis node: {}\n", .{@as(f32, @floatFromInt(end - start)) / 1000});
 
     std.debug.print("Searching...\n", .{});
 
