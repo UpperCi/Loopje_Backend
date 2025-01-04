@@ -56,6 +56,8 @@ Per way
 
 Iterate through all nodes to connect after all ways
 
+Tags should be filtered on relevancy during insertion, not query.
+
 ### Queries
 
 Should be optimized for pathfinding.
