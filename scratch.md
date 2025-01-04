@@ -42,6 +42,26 @@ To allow for tight packing of nodes and tags, without reordering the whole file 
 
 Static node size? Could store tags & ways somewhere else.
 
+### Insertions
+
+- All data is connected to nodes (to optimize spatial queries)
+- Nodes appear before ways
+
+1. Initialize node
+2. Connect tags
+3. Insert node w tags
+
+Per way
+1. Register way into hashmap w connected nodes
+
+Iterate through all nodes to connect after all ways
+
+### Queries
+
+Should be optimized for pathfinding.
+
+After receiving nodes in area, create hashmap with node ids as keys. Each node maps to list of ways.
+
 ### Structurestore
 
 Bytes:

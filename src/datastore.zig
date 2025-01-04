@@ -2,19 +2,27 @@ const std = @import("std");
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
+const StringHashMap = std.hash_map.StringHashMap;
+const AutoHashMap = std.hash_map.AutoHashMap;
+
+// does not store connected nodes
+pub const OsmWay = struct {
+    id: i64,
+    tags: StringHashMap([]u8),
+};
 
 pub const OsmNode = struct {
     id: i64,
     lat: f64,
     lon: f64,
-    ways: []u64 = &.{},
+    ways: []i64 = &.{},
 };
 
 pub const Branch = struct {
-    nw: *TreeNode, // north-west
-    ne: *TreeNode, // north-east
-    sw: *TreeNode, // south-west
-    se: *TreeNode, // south-east
+    nw: *QuadTreeNode, // north-west
+    ne: *QuadTreeNode, // north-east
+    sw: *QuadTreeNode, // south-west
+    se: *QuadTreeNode, // south-east
     split_lat: f64,
     split_lon: f64,
 };
@@ -25,39 +33,17 @@ pub const QueryError = error{
     NotFound,
 };
 
-pub const TreeNodeType = enum { BranchNode, LeafNode };
-pub const TreeNode = union(TreeNodeType) {
-    BranchNode: Branch,
-    LeafNode: ArrayList(OsmNode),
+pub const QuadTree = struct {
+    root: *QuadTreeNode,
 
-    pub fn format(
-        self: TreeNode,
-        comptime _: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        switch (self) {
-            .BranchNode => |branch| {
-                try writer.print(
-                    "Branch(split: ({}, {}), children: [NE: {}, NW: {}, SE: {}, SW: {}])",
-                    .{
-                        branch.split_lat,
-                        branch.split_lon,
-                        branch.ne,
-                        branch.nw,
-                        branch.se,
-                        branch.sw,
-                    },
-                );
-            },
-            .LeafNode => |leaf| {
-                try writer.print("Leaf({} items)", .{leaf.items.len});
-            },
-        }
+    pub fn init(allocator: Allocator) !QuadTree {
+        const root = try allocator.create(QuadTreeNode);
+        root.* = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
+        return .{ .root = root };
     }
 
-    pub fn insertIntoTree(self: *TreeNode, allocator: Allocator, node: OsmNode) !void {
-        var parent = self;
+    pub fn insertIntoTree(self: QuadTree, allocator: Allocator, node: OsmNode) !void {
+        var parent = self.root;
 
         while (true) {
             switch (parent.*) {
@@ -95,7 +81,7 @@ pub const TreeNode = union(TreeNodeType) {
                         const lon_avg = lon_total / leaf_capacity;
 
                         // heap-allocate 4 leaf nodes
-                        var leaves = try allocator.alloc(TreeNode, 4);
+                        var leaves = try allocator.alloc(QuadTreeNode, 4);
                         leaves[0] = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
                         leaves[1] = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
                         leaves[2] = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
@@ -146,7 +132,7 @@ pub const TreeNode = union(TreeNodeType) {
     }
 
     pub fn getInArea(
-        self: *TreeNode,
+        self: QuadTree,
         allocator: Allocator,
         north: f64,
         east: f64,
@@ -155,8 +141,8 @@ pub const TreeNode = union(TreeNodeType) {
     ) !void {
         // Because an area can span multiple leaves, keep a stack of all branches to traverse
         var nodes = ArrayList(OsmNode).init(allocator);
-        var branches = ArrayList(*TreeNode).init(allocator);
-        var parent: ?(*TreeNode) = self;
+        var branches = ArrayList(*QuadTreeNode).init(allocator);
+        var parent: ?(*QuadTreeNode) = self.root;
         while (parent != null) {
             switch (parent.?.*) {
                 .BranchNode => |branch| {
@@ -200,9 +186,10 @@ pub const TreeNode = union(TreeNodeType) {
     }
 
     // just searches all nodes in all leaves
-    pub fn getById(self: *const TreeNode, allocator: Allocator, id: i64) !OsmNode {
-        var branches = ArrayList(*TreeNode).init(allocator);
-        var parent: ?(*const TreeNode) = self;
+    // PERF: B-tree sorted by ids would massively speed up insertion
+    pub fn getById(self: QuadTree, allocator: Allocator, id: i64) !*OsmNode {
+        var branches = ArrayList(*QuadTreeNode).init(allocator);
+        var parent: ?(*const QuadTreeNode) = self.root;
         while (parent != null) {
             switch (parent.?.*) {
                 .BranchNode => |branch| {
@@ -212,7 +199,7 @@ pub const TreeNode = union(TreeNodeType) {
                     try branches.append(branch.sw);
                 },
                 .LeafNode => |leaf| {
-                    for (leaf.items) |node| {
+                    for (leaf.items) |*node| {
                         if (node.id == id) {
                             return node;
                         }
@@ -222,6 +209,38 @@ pub const TreeNode = union(TreeNodeType) {
             parent = branches.popOrNull();
         }
         return QueryError.NotFound;
+    }
+};
+
+pub const QuadTreeNodeType = enum { BranchNode, LeafNode };
+pub const QuadTreeNode = union(QuadTreeNodeType) {
+    BranchNode: Branch,
+    LeafNode: ArrayList(OsmNode),
+
+    pub fn format(
+        self: QuadTreeNode,
+        comptime _: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        switch (self) {
+            .BranchNode => |branch| {
+                try writer.print(
+                    "Branch(split: ({}, {}), children: [NE: {}, NW: {}, SE: {}, SW: {}])",
+                    .{
+                        branch.split_lat,
+                        branch.split_lon,
+                        branch.ne,
+                        branch.nw,
+                        branch.se,
+                        branch.sw,
+                    },
+                );
+            },
+            .LeafNode => |leaf| {
+                try writer.print("Leaf({} items)", .{leaf.items.len});
+            },
+        }
     }
 };
 
@@ -277,24 +296,25 @@ test "construct quadtree from slice of nodes" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var root: TreeNode = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
+    var tree = try QuadTree.init(allocator);
 
     var prng = std.rand.DefaultPrng.init(2);
     const rand = prng.random();
 
-    for (0..1000) |i| {
+    for (0..100000) |i| {
         const node = .{
             .id = @as(i64, @intCast(i)),
             .lat = rand.float(f64) * 100,
             .lon = rand.float(f64) * 100,
         };
-        try root.insertIntoTree(allocator, node);
+        try tree.insertIntoTree(allocator, node);
     }
 
     const start = std.time.milliTimestamp();
     for (0..1000) |i| {
-        // takes 7ms per million active nodes
-        _ = root.getById(allocator, @as(i64, @intCast(i))) catch {
+        // takes 5-6ms per million nodes in tree
+        // 2-3ms in ReleaseFast
+        _ = tree.getById(allocator, @as(i64, @intCast(i))) catch {
             std.debug.print("Err: {}\n", .{i});
         };
     }
@@ -303,5 +323,81 @@ test "construct quadtree from slice of nodes" {
 
     std.debug.print("Searching...\n", .{});
 
-    try root.getInArea(allocator, 50, 50, 0, 0);
+    try tree.getInArea(allocator, 50, 50, 0, 0);
+}
+
+test "add ways to nodes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var ways = ArrayList(OsmWay).init(allocator);
+    // node_id -> way_index
+    var ways_index = AutoHashMap(i64, ArrayList(i64)).init(allocator);
+
+    var tree = try QuadTree.init(allocator);
+
+    var prng = std.rand.DefaultPrng.init(2);
+    const rand = prng.random();
+
+    for (0..100000) |i| {
+        const node = .{
+            .id = @as(i64, @intCast(i)),
+            .lat = rand.float(f64) * 100,
+            .lon = rand.float(f64) * 100,
+        };
+        try tree.insertIntoTree(allocator, node);
+    }
+    for (0..50000) |i| {
+        const way: OsmWay = .{
+            .id = @as(i64, @intCast(i)),
+            .tags = StringHashMap([]u8).init(allocator),
+        };
+        try ways.append(way);
+
+        const node_id_a = @rem(rand.int(i64), 100000);
+        var res_a = ways_index.get(node_id_a);
+        if (res_a == null) {
+            var list = ArrayList(i64).init(allocator);
+            try list.append(way.id);
+            try ways_index.put(node_id_a, list);
+        } else {
+            try res_a.?.append(way.id);
+        }
+
+        const node_id_b = @rem(rand.int(i64), 100000);
+        var res_b = ways_index.get(node_id_b);
+        if (res_b == null) {
+            var list = ArrayList(i64).init(allocator);
+            try list.append(way.id);
+            try ways_index.put(node_id_b, list);
+        } else {
+            try res_b.?.append(way.id);
+        }
+
+        const node_id_c = @rem(rand.int(i64), 100000);
+        var res_c = ways_index.get(node_id_c);
+        if (res_c == null) {
+            var list = ArrayList(i64).init(allocator);
+            try list.append(way.id);
+            try ways_index.put(node_id_c, list);
+        } else {
+            try res_c.?.append(way.id);
+        }
+    }
+
+    const start = std.time.milliTimestamp();
+    for (0..1000) |i| {
+        // takes 5-6ms per million nodes in tree
+        // 2-3ms in ReleaseFast
+        _ = tree.getById(allocator, @as(i64, @intCast(i))) catch {
+            std.debug.print("Err: {}\n", .{i});
+        };
+    }
+    const end = std.time.milliTimestamp();
+    std.debug.print("Millis per node: {}\n", .{@as(f32, @floatFromInt(end - start)) / 1000});
+
+    std.debug.print("Searching...\n", .{});
+
+    try tree.getInArea(allocator, 50, 50, 0, 0);
 }
