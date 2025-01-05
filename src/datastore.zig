@@ -224,7 +224,7 @@ pub const QuadTree = struct {
     }
 
     // just searches all nodes in all leaves
-    // PERF: B-tree sorted by ids would massively speed up insertion
+    // PERF: B-tree sorted by ids would massively speed up lookup
     pub fn getById(self: QuadTree, allocator: Allocator, id: i64) !*OsmNode {
         var branches = ArrayList(*QuadTreeNode).init(allocator);
         var parent: ?(*const QuadTreeNode) = self.root;
@@ -380,7 +380,11 @@ test "add ways to nodes" {
     var prng = std.rand.DefaultPrng.init(2);
     const rand = prng.random();
 
-    for (0..100000) |i| {
+    const node_count = 10000;
+    const way_count = 10000;
+    const way_length = 10;
+
+    for (0..node_count) |i| {
         const node = .{
             .id = @as(i64, @intCast(i)),
             .lat = rand.float(f64) * 100,
@@ -389,14 +393,14 @@ test "add ways to nodes" {
         try tree.insertNode(allocator, node);
     }
 
-    for (0..100000) |i| {
+    for (0..way_count) |i| {
         const way: OsmWay = .{
             .id = @as(i64, @intCast(i)),
             .tags = &.{},
         };
 
-        for (0..10) |_| {
-            const node_id = @rem(rand.int(i64), 100000);
+        for (0..way_length) |_| {
+            const node_id: i64 = @rem(rand.int(u63), node_count);
             var res = ways_index.get(node_id);
             if (res == null) {
                 res = ArrayList(i64).init(allocator);
@@ -416,7 +420,8 @@ test "add ways to nodes" {
 
     {
         const start = std.time.milliTimestamp();
-        for (0..1000) |i| {
+        const iters = 1000;
+        for (0..iters) |i| {
             // takes 5-6ms per million nodes in tree
             // 2-3ms in ReleaseFast
             _ = tree.getById(allocator, @as(i64, @intCast(i))) catch {
@@ -424,7 +429,7 @@ test "add ways to nodes" {
             };
         }
         const end = std.time.milliTimestamp();
-        std.debug.print("Millis per node: {}\n", .{@as(f32, @floatFromInt(end - start)) / 1000});
+        std.debug.print("Get {} nodes by id: {}ms\n", .{ iters, end - start });
     }
 
     std.debug.print("Searching...\n", .{});
