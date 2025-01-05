@@ -5,6 +5,9 @@ const assert = std.debug.assert;
 const StringHashMap = std.hash_map.StringHashMap;
 const AutoHashMap = std.hash_map.AutoHashMap;
 
+// TODO: generic b-tree?
+// Would allow for fast tag-lookups
+
 pub const OsmTag = struct {
     key: []u8,
     value: []u8,
@@ -20,7 +23,7 @@ pub const OsmNode = struct {
     id: i64,
     lat: f64,
     lon: f64,
-    ways: []i64 = &.{},
+    ways: []*const OsmWay = &.{},
 };
 
 pub const Branch = struct {
@@ -38,16 +41,16 @@ pub const QueryError = error{
     NotFound,
 };
 
-pub const QuadTree = struct {
+pub const Datastore = struct {
     root: *QuadTreeNode,
 
-    pub fn init(allocator: Allocator) !QuadTree {
+    pub fn init(allocator: Allocator) !Datastore {
         const root = try allocator.create(QuadTreeNode);
         root.* = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
         return .{ .root = root };
     }
 
-    pub fn insertNode(self: QuadTree, allocator: Allocator, node: OsmNode) !void {
+    pub fn insertNode(self: Datastore, allocator: Allocator, node: OsmNode) !void {
         var parent = self.root;
 
         while (true) {
@@ -138,7 +141,7 @@ pub const QuadTree = struct {
 
     // returns nodes, including connected ways
     pub fn getInArea(
-        self: QuadTree,
+        self: Datastore,
         allocator: Allocator,
         north: f64,
         east: f64,
@@ -192,7 +195,7 @@ pub const QuadTree = struct {
         return nodes.toOwnedSlice();
     }
 
-    pub fn insertWaysBatch(self: QuadTree, allocator: Allocator, ways_map: AutoHashMap(i64, ArrayList(i64))) !void {
+    pub fn insertWaysBatch(self: Datastore, allocator: Allocator, ways_map: AutoHashMap(i64, ArrayList(*const OsmWay))) !void {
         var parent: ?(*const QuadTreeNode) = self.root;
         var branches = ArrayList(*QuadTreeNode).init(allocator);
 
@@ -208,9 +211,9 @@ pub const QuadTree = struct {
                     for (leaf.items) |*node| {
                         const ways = ways_map.get(node.id);
                         if (ways != null) {
-                            var list = ArrayList(i64).fromOwnedSlice(allocator, node.ways);
-                            for (ways.?.items) |way_id| {
-                                try list.append(way_id);
+                            var list = ArrayList(*const OsmWay).fromOwnedSlice(allocator, node.ways);
+                            for (ways.?.items) |way_ref| {
+                                try list.append(way_ref);
                             }
                             node.ways = try list.toOwnedSlice();
                         }
@@ -225,7 +228,7 @@ pub const QuadTree = struct {
 
     // just searches all nodes in all leaves
     // PERF: B-tree sorted by ids would massively speed up lookup
-    pub fn getById(self: QuadTree, allocator: Allocator, id: i64) !*OsmNode {
+    pub fn getById(self: Datastore, allocator: Allocator, id: i64) !*OsmNode {
         var branches = ArrayList(*QuadTreeNode).init(allocator);
         var parent: ?(*const QuadTreeNode) = self.root;
         while (parent != null) {
@@ -334,7 +337,7 @@ test "construct quadtree from slice of nodes" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var tree = try QuadTree.init(allocator);
+    var tree = try Datastore.init(allocator);
 
     var prng = std.rand.DefaultPrng.init(2);
     const rand = prng.random();
@@ -366,16 +369,16 @@ test "construct quadtree from slice of nodes" {
     _ = try tree.getInArea(allocator, 50, 50, 0, 0);
 }
 
-test "add ways to nodes" {
+test "construct datastore of nodes and tagged ways" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
     // var ways = ArrayList(OsmWay).init(allocator);
-    var ways_index = AutoHashMap(i64, ArrayList(i64)).init(allocator);
+    var ways_index = AutoHashMap(i64, ArrayList(*const OsmWay)).init(allocator);
     // node_id -> way_index
 
-    var tree = try QuadTree.init(allocator);
+    var tree = try Datastore.init(allocator);
 
     var prng = std.rand.DefaultPrng.init(2);
     const rand = prng.random();
@@ -383,6 +386,7 @@ test "add ways to nodes" {
     const node_count = 10000;
     const way_count = 10000;
     const way_length = 10;
+    const way_tags = 5;
 
     for (0..node_count) |i| {
         const node = .{
@@ -394,18 +398,28 @@ test "add ways to nodes" {
     }
 
     for (0..way_count) |i| {
-        const way: OsmWay = .{
+        var tags = ArrayList(OsmTag).init(allocator);
+        for (0..way_tags) |_| {
+            const key = try allocator.alloc(u8, 8);
+            const value = try allocator.alloc(u8, 16);
+            rand.bytes(key);
+            rand.bytes(value);
+            try tags.append(.{ .key = key, .value = value });
+        }
+
+        const way = try allocator.create(OsmWay);
+        way.* = .{
             .id = @as(i64, @intCast(i)),
-            .tags = &.{},
+            .tags = try tags.toOwnedSlice(),
         };
 
         for (0..way_length) |_| {
-            const node_id: i64 = @rem(rand.int(u63), node_count);
+            const node_id: i64 = rand.uintAtMost(u63, node_count);
             var res = ways_index.get(node_id);
             if (res == null) {
-                res = ArrayList(i64).init(allocator);
+                res = ArrayList(*const OsmWay).init(allocator);
             }
-            try res.?.append(way.id);
+            try res.?.append(way);
             try ways_index.put(node_id, res.?);
         }
     }
@@ -415,7 +429,9 @@ test "add ways to nodes" {
         try tree.insertWaysBatch(allocator, ways_index);
         const end = std.time.milliTimestamp();
         // 36s in debug, 4s in release
-        std.debug.print("Inserting 10k ways & 100k connections: {}ms\n", .{@as(f32, @floatFromInt(end - start))});
+        std.debug.print("Inserting 10k ways & 100k connections: {}ms\n", .{
+            @as(f32, @floatFromInt(end - start)),
+        });
     }
 
     {
@@ -445,5 +461,15 @@ test "add ways to nodes" {
             connections,
             nodes.len,
         });
+    }
+
+    {
+        std.debug.print("Inspect random node, connections and tags\n", .{});
+        const node_id: i64 = rand.uintAtMost(u63, node_count);
+        const node = try tree.getById(allocator, node_id);
+        std.debug.print("ID: {}, lat: {}, lon: {}\n", .{ node.id, node.lat, node.lon });
+        for (node.ways) |way| {
+            std.debug.print("    Way(ID: {}, tags: {})\n", .{ way.id, way.tags.len });
+        }
     }
 }
