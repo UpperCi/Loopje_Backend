@@ -72,7 +72,7 @@ fn getOsmTagFromTag(data: []u8) !database.OsmTag {
 }
 
 fn getOsmWayFromTag(data: []u8) !database.OsmWay {
-    const visibility = try valueFromTag("visible", data);
+    const visibility = valueFromTag("visible", data) catch "false";
     const id_str = try valueFromTag("id", data);
     const id = try std.fmt.parseInt(i64, id_str, 10);
     if (visibility[0] == 't') {
@@ -88,7 +88,7 @@ fn getOsmNdIdFromTag(data: []u8) !i64 {
     return try std.fmt.parseInt(i64, id_str, 10);
 }
 
-fn parseOsm(db: database.DB, path: []const u8) void {
+fn parseOsm(db: *database.DB, path: []const u8) void {
     const file = std.fs.cwd().openFile(path, .{}) catch unreachable;
     defer file.close();
     const meta = file.metadata() catch unreachable;
@@ -107,7 +107,7 @@ fn parseOsm(db: database.DB, path: []const u8) void {
     var insertions: u64 = 0;
     const stdout = std.io.getStdOut().writer();
 
-    db.startTransaction();
+    db.startTransaction() catch unreachable;
     // 11363070619
     // in_stream.skipBytes(11375795500, .{}) catch {};
 
@@ -116,12 +116,12 @@ fn parseOsm(db: database.DB, path: []const u8) void {
             break;
         };
 
-        if (insertions >= 500_000) {
+        if (insertions >= 200_000) {
             assert(!in_item);
-            db.endTransaction();
-            db.startTransaction();
+            db.endTransaction() catch unreachable;
+            db.startTransaction() catch unreachable;
             const percentage: f64 = @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(size));
-            stdout.print("{any}/{any} ({d:.4}%)\n", .{ i, size, percentage * 100 }) catch {};
+            stdout.print("{any}/{any} ({d:.2}%)\n", .{ i, size, percentage * 100 }) catch {};
             insertions = 0;
         }
 
@@ -133,14 +133,14 @@ fn parseOsm(db: database.DB, path: []const u8) void {
                         parent = .None;
                     },
                     'w' => { // Way
-                        const way = getOsmWayFromTag(item_buf[0..]) catch unreachable;
-                        db.insertOsmWay(way.id, way.visible) catch {};
+                        const way = getOsmWayFromTag(item_buf[0..]) catch continue;
+                        db.queueOsmWay(way.id, way.visible) catch {};
                         insertions += 1;
                         parent = .{ .Way = way };
                     },
                     't' => { // Tag
                         const tag = getOsmTagFromTag(item_buf[0..]) catch unreachable;
-                        db.insertOsmTag(parent, tag.key, tag.value) catch {};
+                        db.queueOsmTag(parent, tag.key, tag.value) catch {};
                         insertions += 1;
                     },
                     'r' => { // Relation
@@ -151,13 +151,13 @@ fn parseOsm(db: database.DB, path: []const u8) void {
                         if (item_buf[1] == 'o') { // Node
                             // Error return trace
                             const node = getOsmNodeFromTag(item_buf[0..]) catch unreachable;
-                            db.insertOsmNode(node.id, node.lat, node.lon) catch {};
+                            db.queueOsmNode(node.id, node.lat, node.lon) catch unreachable;
                             insertions += 1;
                             parent = .{ .Node = node };
                         } else { // Nd, connects node to way
                             assert(parent == .Way);
                             const nd_id = getOsmNdIdFromTag(item_buf[0..]) catch unreachable;
-                            db.insertOsmNd(parent, nd_id) catch {};
+                            db.queueOsmNd(parent, nd_id) catch {};
                             insertions += 1;
                         }
                     },
@@ -181,7 +181,7 @@ fn parseOsm(db: database.DB, path: []const u8) void {
     }
     assert(!in_item);
 
-    db.endTransaction();
+    db.endTransaction() catch unreachable;
 }
 
 pub fn main() void {
@@ -189,13 +189,13 @@ pub fn main() void {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    const db = database.DB.init(alloc, "osm") catch unreachable;
+    var db = database.DB.init(alloc) catch unreachable;
     defer db.deinit();
 
-    std.debug.print("{}\n", .{db});
+    // std.debug.print("{}\n", .{db});
 
     // No allocations during data insertion (besides internal SQLite allocations)
-    parseOsm(db, "beurs.osm");
-    // parseOsm(db, "roffa.osm");
-    // parseOsm(db, "zuid-holland-latest.osm");
+    // parseOsm(&db, "beurs.osm");
+    // parseOsm(&db, "roffa.osm");
+    parseOsm(&db, "zuid-holland-latest.osm");
 }

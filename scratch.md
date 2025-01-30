@@ -11,13 +11,16 @@ SELECT osm_nodes.id, osm_nodes.latitude, osm_nodes.longitude, osm_nodes_tags.key
 
 Get nodes in area
 ```sql
-SELECT osm_nodes.id, osm_nodes.latitude, osm_nodes.longitude, osm_nodes_tags.key, osm_nodes_tags.value FROM osm_nodes
-  LEFT JOIN osm_nodes_tags ON osm_nodes.id=osm_nodes_tags.node_id
-  WHERE osm_nodes.latitude > 51.922647 AND osm_nodes.latitude < 51.925558 AND osm_nodes.longitude > 4.474488 AND osm_nodes.longitude < 4.48291
-  ;
+  SELECT COUNT(*) FROM osm_nodes WHERE ST_Contains(ST_MakeEnvelope(51.8,4.4,51.85,4.45),position);
 ```
-With SQLite, this takes 11.5 seconds on "zuid-holland-latest.osm"
-14 seconds with simplified tags...
+```sql
+
+SELECT COUNT(*) FROM osm_nodes 
+ LEFT JOIN osm_nodes_tags ON osm_nodes.id = osm_nodes_tags.node_id
+ WHERE ST_Contains(ST_MakeEnvelope(51.8,4.4,51.85,4.45),position);
+```
+
+With Postgres + PostGIS, this takes ~2.5 seconds on "zuid-holland-latest.osm"
 
 Get all ways + connected tags
 ```sql

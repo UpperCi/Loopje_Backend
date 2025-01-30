@@ -16,6 +16,7 @@ pub const OsmTag = struct {
 // only used during quadtree construction
 pub const OsmWay = struct {
     id: i64,
+    visible: bool = true,
     tags: []OsmTag,
 };
 
@@ -43,11 +44,12 @@ pub const QueryError = error{
 
 pub const Datastore = struct {
     root: *QuadTreeNode,
+    allocator: Allocator,
 
     pub fn init(allocator: Allocator) !Datastore {
         const root = try allocator.create(QuadTreeNode);
         root.* = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
-        return .{ .root = root };
+        return .{ .root = root, .allocator = allocator };
     }
 
     pub fn insertNode(self: Datastore, allocator: Allocator, node: OsmNode) !void {
@@ -90,10 +92,10 @@ pub const Datastore = struct {
 
                         // heap-allocate 4 leaf nodes
                         var leaves = try allocator.alloc(QuadTreeNode, 4);
-                        leaves[0] = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
-                        leaves[1] = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
-                        leaves[2] = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
-                        leaves[3] = .{ .LeafNode = ArrayList(OsmNode).init(allocator) };
+                        leaves[0] = .{ .LeafNode = ArrayList(OsmNode).init(self.allocator) };
+                        leaves[1] = .{ .LeafNode = ArrayList(OsmNode).init(self.allocator) };
+                        leaves[2] = .{ .LeafNode = ArrayList(OsmNode).init(self.allocator) };
+                        leaves[3] = .{ .LeafNode = ArrayList(OsmNode).init(self.allocator) };
                         var leaf_ne = &leaves[0];
                         var leaf_nw = &leaves[1];
                         var leaf_se = &leaves[2];
@@ -117,12 +119,15 @@ pub const Datastore = struct {
                                 }
                             }
                         }
+
                         assert(leaf_ne.LeafNode.items.len <= leaf_capacity);
                         assert(leaf_nw.LeafNode.items.len <= leaf_capacity);
+
+                        // FIX: assert fails for south-holland.osm
                         assert(leaf_se.LeafNode.items.len <= leaf_capacity);
                         assert(leaf_sw.LeafNode.items.len <= leaf_capacity);
 
-                        // replace self with a branch node, has previously created leaves as children
+                        // replace self with a branch node that has previously created leaves as children
                         parent.LeafNode.deinit();
                         parent.* = .{ .BranchNode = .{
                             .ne = leaf_ne,
