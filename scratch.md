@@ -1,5 +1,9 @@
 - Zig 0.13.0
 
+# Build
+
+- seperate steps for populating DB and starting webserver
+
 # Queries
 
 Get all nodes + connected tags
@@ -18,6 +22,13 @@ Get nodes in area
 SELECT COUNT(*) FROM osm_nodes 
  LEFT JOIN osm_nodes_tags ON osm_nodes.id = osm_nodes_tags.node_id
  WHERE ST_Contains(ST_MakeEnvelope(51.8,4.4,51.85,4.45),position);
+```
+```sql
+SELECT
+osm_ways.id, ST_X(osm_nodes.position), ST_Y(osm_nodes.position)
+FROM osm_ways
+LEFT JOIN osm_ways_nodes ON osm_ways.id = osm_ways_nodes.way_id
+LEFT JOIN osm_nodes ON osm_ways_nodes.node_id = osm_nodes.id;
 ```
 
 With Postgres + PostGIS, this takes ~2.5 seconds on "zuid-holland-latest.osm"

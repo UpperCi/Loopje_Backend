@@ -1,5 +1,6 @@
 const std = @import("std");
 const database = @import("database.zig");
+const navigation = @import("navigation.zig");
 const assert = std.debug.assert;
 const eql = std.mem.eql;
 const Allocator = std.mem.Allocator;
@@ -89,6 +90,7 @@ fn getOsmNdIdFromTag(data: []u8) !i64 {
 }
 
 fn parseOsm(db: *database.DB, path: []const u8) void {
+    db.reset() catch unreachable;
     const file = std.fs.cwd().openFile(path, .{}) catch unreachable;
     defer file.close();
     const meta = file.metadata() catch unreachable;
@@ -181,6 +183,7 @@ fn parseOsm(db: *database.DB, path: []const u8) void {
     }
     assert(!in_item);
 
+    db.insert_queue() catch unreachable;
     db.endTransaction() catch unreachable;
 }
 
@@ -194,8 +197,31 @@ pub fn main() void {
 
     // std.debug.print("{}\n", .{db});
 
-    // No allocations during data insertion (besides internal SQLite allocations)
-    // parseOsm(&db, "beurs.osm");
+    // parseOsm(&db, "zuid-holland-latest.osm");
+    parseOsm(&db, "beurs.osm");
     // parseOsm(&db, "roffa.osm");
-    parseOsm(&db, "zuid-holland-latest.osm");
+
+    std.debug.print("start queries\n", .{});
+    const ways = db.getOsmWaysInArea(alloc, 51.91, 4.4, 51.92, 4.5) catch unreachable;
+    // const ways = db.getOsmWaysInArea(alloc, 0, 0, 360, 360) catch unreachable;
+    for (ways[0..100]) |way| {
+        std.debug.print("----- WAY -----\n", .{});
+        for (way.tags) |tag| {
+            std.debug.print("{s} = {s}\n", .{ tag.key, tag.value });
+        }
+    }
+    std.debug.print("Ways: {}\n", .{ways.len});
+    navigation.construct_navigation_graph(alloc, ways);
+    // what tags do I care about?
+    // - highway. Main travel road specifier.
+    //   - Good: footway, steps, pedestrian, bridleway, corridor, path
+    //   - Dubious: residential, living_street, track, crossing
+    //   - Bad: road
+    // - footway. Foot access in addition to another type of road.
+    //   - sidewalk, traffic_island, crossing
+    // - sidewalk.
+    //   - both, left, right, no
+    // - oneway.
+    // - bicycle.
+    //   - use_sidepath
 }
