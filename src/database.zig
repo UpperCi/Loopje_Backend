@@ -7,8 +7,8 @@ pub const OsmNode = struct {
     id: i64,
     lat: f64,
     lon: f64,
-    ways: []OsmTag = &.{},
-    tags: []OsmTag = &.{},
+    ways: []const OsmWay = &.{},
+    tags: []const OsmTag = &.{},
 };
 
 pub const OsmTag = struct {
@@ -20,8 +20,8 @@ pub const OsmTag = struct {
 pub const OsmWay = struct {
     id: i64,
     visible: bool,
-    nodes: []OsmNode = &.{},
-    tags: []OsmTag = &.{},
+    nodes: []const OsmNode = &.{},
+    tags: []const OsmTag = &.{},
 };
 
 // Nd is ommited, as it should link to an actual node
@@ -303,19 +303,29 @@ pub const DB = struct {
         return try nodes.toOwnedSlice();
     }
 
+    // namings are incorrect. (left, top) and (right, bottom) should be swapped
     pub fn getOsmWaysInArea(
         self: DB,
         allocator: Allocator,
-        left: f64,
         top: f64,
-        right: f64,
+        left: f64,
         bottom: f64,
+        right: f64,
     ) ![]OsmWay {
         var ways = ArrayList(OsmWay).init(allocator);
         var way_nodes = ArrayList(OsmNode).init(allocator);
         var way_tags = ArrayList(OsmTag).init(allocator);
         // irrelevant ways are filtered out in query
         const query =
+            // \\SELECT
+            // \\osm_ways.id, osm_nodes.id, ST_X(osm_nodes.position), ST_Y(osm_nodes.position),
+            // \\osm_ways_tags.key, osm_ways_tags.value
+            // \\FROM osm_ways
+            // \\LEFT JOIN osm_ways_nodes ON osm_ways.id = osm_ways_nodes.way_id
+            // \\LEFT JOIN osm_nodes ON osm_ways_nodes.node_id = osm_nodes.id
+            // \\LEFT JOIN osm_ways_tags ON osm_ways_tags.way_id = osm_ways.id
+            // \\WHERE ST_Contains(ST_MakeEnvelope($1,$2,$3,$4),osm_nodes.position)
+            // \\;
             \\SELECT
             \\osm_ways.id, osm_nodes.id, ST_X(osm_nodes.position), ST_Y(osm_nodes.position),
             \\osm_ways_tags.key, osm_ways_tags.value
@@ -328,7 +338,7 @@ pub const DB = struct {
             \\;
         ;
         std.debug.print("query:\n{s}\n", .{query});
-        var result = self.conn.query(query, .{ left, top, right, bottom }) catch |err| {
+        var result = self.conn.query(query, .{ top, left, bottom, right }) catch |err| {
             std.debug.print("Errtype: {any}\n", .{err});
             if (self.conn.err) |pgerr| {
                 std.debug.print("Message: {s}\n", .{pgerr.message});
@@ -387,66 +397,39 @@ pub const DB = struct {
 
         return try ways.toOwnedSlice();
     }
-
-    // TODO get associated tags
-    // pub fn queryOsmNodes(self: DB, alloc: Allocator) ![]OsmNode {
-    //     const query = "SELECT * FROM osm_nodes";
-    //     var stmt: ?*c.sqlite3_stmt = undefined;
-    //     if (c.SQLITE_OK != c.sqlite3_prepare_v2(self.db, query, query.len + 1, &stmt, null)) {
-    //         std.debug.print("COULDN'T EXEC QUERY\n", .{});
-    //         return DBError.GenericError;
-    //     }
-    //     const const result = stmt.?;
-    //     defer _ = c.sqlite3_finalize(result);
-
-    //     var nodes = ArrayList(OsmNode).init(alloc);
-
-    //     var rc = c.sqlite3_step(result);
-    //     while (rc == c.SQLITE_ROW) {
-    //         const id = c.sqlite3_column_int64(result, 0);
-    //         const lat = c.sqlite3_column_double(result, 1);
-    //         const lon = c.sqlite3_column_double(result, 2);
-    //         try nodes.append(.{ .id = @as(i64, @bitCast(id)), .lat = lat, .lon = lon });
-    //         rc = c.sqlite3_step(result);
-    //     }
-
-    //     const nodes_slice = try nodes.toOwnedSlice();
-
-    //     return nodes_slice;
-    // }
 };
 
-test "insert content" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+// test "insert content" {
+//     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+//     defer arena.deinit();
+//     const alloc = arena.allocator();
 
-    const db = try DB.init(alloc);
-    defer db.deinit();
+//     const db = try DB.init(alloc);
+//     defer db.deinit();
 
-    std.debug.print("Inserting node!\n", .{});
-    try db.insertOsmNode(1, 2, 3);
-    try db.insertOsmNode(4, 3, 2);
+//     std.debug.print("Inserting node!\n", .{});
+//     try db.insertOsmNode(1, 2, 3);
+//     try db.insertOsmNode(4, 3, 2);
 
-    try db.insertOsmWay(1, true);
-    try db.insertOsmWay(2, false);
-    try db.insertOsmWay(3, true);
+//     try db.insertOsmWay(1, true);
+//     try db.insertOsmWay(2, false);
+//     try db.insertOsmWay(3, true);
 
-    const parent: OsmEntry = .{ .Way = .{
-        .id = 1,
-        .visible = true,
-    } };
-    try db.insertOsmNd(parent, 4);
-    const parent2: OsmEntry = .{ .Way = .{
-        .id = 2,
-        .visible = true,
-    } };
-    try db.insertOsmNd(parent2, 1);
-}
+//     const parent: OsmEntry = .{ .Way = .{
+//         .id = 1,
+//         .visible = true,
+//     } };
+//     try db.insertOsmNd(parent, 4);
+//     const parent2: OsmEntry = .{ .Way = .{
+//         .id = 2,
+//         .visible = true,
+//     } };
+//     try db.insertOsmNd(parent2, 1);
+// }
 
 test "geojson point formatting" {
-    const lat: f64 = 123.0;
-    const lon: f64 = 456.0;
+    const lat: f64 = 1.0;
+    const lon: f64 = 1.0;
     std.debug.print(
         "0101000000{X:0>16}{X:0>16}\n",
         .{

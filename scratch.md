@@ -35,9 +35,30 @@ With Postgres + PostGIS, this takes ~2.5 seconds on "zuid-holland-latest.osm"
 
 Get all ways + connected tags
 ```sql
-SELECT osm_ways.id, osm_ways_tags.key, osm_ways_tags.value FROM osm_ways
-  LEFT JOIN osm_ways_tags ON osm_ways.id=osm_ways_tags.way_id
-  ;
+SELECT osm_ways.id, osm_nodes.id, ST_X(osm_nodes.position), ST_Y(osm_nodes.position), osm_ways_tags.key, osm_ways_tags.value
+FROM osm_ways
+LEFT JOIN osm_ways_nodes ON osm_ways.id = osm_ways_nodes.way_id
+LEFT JOIN osm_nodes ON osm_ways_nodes.node_id = osm_nodes.id
+LEFT JOIN osm_ways_tags ON osm_ways_tags.way_id = osm_ways.id
+WHERE ST_Contains(ST_MakeEnvelope(51.90224,4.43693,51.9486,4.57169),osm_nodes.position) AND
+osm_ways_tags.key IN ('highway','footway','sidewalk','bicycle');
+
+SELECT osm_ways.id, osm_nodes.id, ST_X(osm_nodes.position), ST_Y(osm_nodes.position), osm_ways_tags.key, osm_ways_tags.value
+FROM osm_ways
+LEFT JOIN osm_ways_nodes ON osm_ways.id = osm_ways_nodes.way_id
+LEFT JOIN osm_nodes ON osm_ways_nodes.node_id = osm_nodes.id
+WHERE ST_Contains(ST_MakeEnvelope(51.90224,4.43693,51.9486,4.57169),osm_nodes.position);
+```
+```sql
+SELECT osm_ways.id, osm_nodes.id, ST_X(osm_nodes.position), ST_Y(osm_nodes.position), osm_ways_tags.key, osm_ways_tags.value FROM osm_ways LEFT JOIN osm_ways_nodes ON osm_ways.id = osm_ways_nodes.way_id LEFT JOIN osm_nodes ON osm_ways_nodes.node_id = osm_nodes.id LEFT JOIN osm_ways_tags ON osm_ways_tags.way_id = osm_ways.id WHERE ST_Contains(ST_MakeEnvelope(0,0,100,100),osm_nodes.position) AND osm_ways_tags.key IN ('highway','footway','sidewalk','bicycle');
+
+SELECT COUNT(*) FROM osm_ways LEFT JOIN osm_ways_nodes ON osm_ways.id = osm_ways_nodes.way_id LEFT JOIN osm_nodes ON osm_ways_nodes.node_id = osm_nodes.id LEFT JOIN osm_ways_tags ON osm_ways_tags.way_id = osm_ways.id WHERE ST_Contains(ST_MakeEnvelope(0,0,100,100),osm_nodes.position) AND osm_ways_tags.key IN ('highway','footway','sidewalk','bicycle');
+
+SELECT COUNT(*) FROM osm_ways LEFT JOIN osm_ways_nodes ON osm_ways.id = osm_ways_nodes.way_id LEFT JOIN osm_nodes ON osm_ways_nodes.node_id = osm_nodes.id LEFT JOIN osm_ways_tags ON osm_ways_tags.way_id = osm_ways.id WHERE ST_Contains(ST_MakeEnvelope(0,0,100,100),osm_nodes.position);
+
+sELECT COUNT(*) FROM osm_ways LEFT JOIN osm_ways_nodes ON osm_ways.id = osm_ways_nodes.way_id LEFT JOIN osm_nodes ON osm_ways_nodes.node_id = osm_nodes.id WHERE ST_Contains(ST_MakeEnvelope(51.90224,4.43693,51.9486,4.57169),osm_nodes.position);
+
+sELECT COUNT(*) FROM osm_ways LEFT JOIN osm_ways_nodes ON osm_ways.id = osm_ways_nodes.way_id LEFT JOIN osm_nodes ON osm_ways_nodes.node_id = osm_nodes.id WHERE ST_Contains(ST_MakeEnvelope(0,0,100,100),osm_nodes.position);
 ```
 
 ## Database
