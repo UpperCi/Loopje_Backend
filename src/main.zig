@@ -15,6 +15,8 @@ const NavigationQueryArgs = struct {
     lon_end: f64,
 };
 
+const AppState = struct {};
+
 // longitude is E-W (~5 for NL)
 // latitude is N-S (~52 for NL)
 
@@ -26,7 +28,7 @@ const right_cache: f64 = 4.539;
 const top_cache: f64 = 51.898;
 const bottom_cache: f64 = 51.946;
 
-fn queryNavigation(req: *httpz.Request, res: *httpz.Response) !void {
+fn queryNavigation(_: *AppState, req: *httpz.Request, res: *httpz.Response) !void {
     const allocator: Allocator = res.arena;
     if (try req.json(NavigationQueryArgs)) |args| {
         res.status = 200;
@@ -49,7 +51,7 @@ fn queryNavigation(req: *httpz.Request, res: *httpz.Response) !void {
 }
 
 // uses global cache of nodes
-fn queryNavigationCached(req: *httpz.Request, res: *httpz.Response) !void {
+fn queryNavigationCached(_: *AppState, req: *httpz.Request, res: *httpz.Response) !void {
     const allocator: Allocator = res.arena;
     if (try req.json(NavigationQueryArgs)) |args| {
         res.status = 200;
@@ -88,21 +90,22 @@ pub fn main() !void {
     //     right_cache,
     // );
     // nodes_nav_cache = try navigation.constructNavigationGraph(allocator_arena, ways_cache);
+    var state_app: AppState = .{};
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator_gpa = gpa.allocator();
 
-    var server = try httpz.Server().init(allocator_gpa, .{ .port = 8090 });
+    var server = try httpz.Server(*AppState).init(allocator_gpa, .{ .port = 8090 }, &state_app);
     defer {
         // clean shutdown, finishes serving any live request
         server.stop();
         server.deinit();
     }
 
-    var router = server.router();
+    var router = try server.router(.{});
 
-    router.post("/navigate", queryNavigation);
-    router.post("/navigate-cached", queryNavigationCached);
+    router.post("/navigate", queryNavigation, .{});
+    router.post("/navigate-cached", queryNavigationCached, .{});
 
     // blocks
     std.debug.print("Starting server...\n", .{});
