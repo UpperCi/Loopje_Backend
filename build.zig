@@ -9,10 +9,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    // const httpz = b.dependency("httpz", .{
-    //     .target = target,
-    //     .optimize = optimize,
-    // });
+    const httpz = b.dependency("httpz", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     // db seeding
     const exe_seed = b.addExecutable(.{
@@ -39,6 +39,7 @@ pub fn build(b: *std.Build) void {
     });
 
     exe.root_module.addImport("pg", pg.module("pg"));
+    exe.root_module.addImport("httpz", httpz.module("httpz"));
 
     b.installArtifact(exe);
 
