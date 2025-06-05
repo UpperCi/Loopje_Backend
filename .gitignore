@@ -1,10 +1,8 @@
 netherlands-latest.osm
 zuid-holland-latest.osm
-roffa.osm
 osm
 .zig-cache
 zig-linux-x86_64-0.14.0
 zig-out
-*.osm
 *.bz2
 perf.*
