@@ -16,10 +16,14 @@ pub fn build(b: *std.Build) void {
 
     // db seeding
     const exe_seed = b.addExecutable(.{
-        .name = "Loopje",
+        .name = "Loopje Server",
         .root_source_file = b.path("src/seed.zig"),
         .target = target,
         .optimize = optimize,
+        //      | cold  | hot  | norm cold, norm hot
+        // llvm | 11.0s | 3.8s | 1.0 , 1.0
+        //  zig |  8.3s | 1.4s | 0.75, 0.36
+        .use_llvm = false,
     });
 
     exe_seed.root_module.addImport("pg", pg.module("pg"));
@@ -32,10 +36,11 @@ pub fn build(b: *std.Build) void {
 
     // webserver
     const exe = b.addExecutable(.{
-        .name = "Loopje",
+        .name = "Loopje Seed",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .use_llvm = false,
     });
 
     exe.root_module.addImport("pg", pg.module("pg"));

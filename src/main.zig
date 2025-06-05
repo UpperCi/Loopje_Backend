@@ -73,6 +73,46 @@ fn queryNavigationCached(_: *AppState, req: *httpz.Request, res: *httpz.Response
     }
 }
 
+const ObjectEmpty = struct {};
+const object_empty: ObjectEmpty = .{};
+
+// "coordinates" : [[lon, lat], [lon, lat]]
+fn queryNavigationJson(_: *AppState, req: *httpz.Request, res: *httpz.Response) !void {
+    const allocator: Allocator = res.arena;
+    if (try req.json(NavigationQueryArgs)) |args| {
+        res.status = 200;
+        std.debug.print("Args: {any}\n", .{args});
+
+        const nodes = try navigation.findPath(
+            allocator,
+            &db,
+            0.0,
+            1.0,
+            args.lon_start,
+            args.lat_start,
+            args.lon_end,
+            args.lat_end,
+        );
+
+        const coordinates = try allocator.alloc([]f64, nodes.len);
+        for (coordinates, nodes) |*coord, node| {
+            coord.* = try allocator.alloc(f64, 2);
+            coord.*[0] = node.lon;
+            coord.*[1] = node.lat;
+        }
+        try res.json(.{ .status = "succes", .geo = .{
+            .type = "FeatureCollection", .features = .{.{
+                .type = "Feature",
+                .properties = object_empty,
+                .geometry = .{ .coordinates = coordinates, .type = "LineString" },
+            }}
+        } }, .{});
+    } else {
+        res.status = 400;
+        try res.json("Invalid arguments", .{});
+    }
+}
+
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -106,6 +146,7 @@ pub fn main() !void {
 
     router.post("/navigate", queryNavigation, .{});
     router.post("/navigate-cached", queryNavigationCached, .{});
+    router.post("/navigate-json", queryNavigationJson, .{});
 
     // blocks
     std.debug.print("Starting server...\n", .{});
