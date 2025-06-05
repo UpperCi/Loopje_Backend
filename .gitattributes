@@ -1,2 +1,9 @@
+perf.data filter=lfs diff=lfs merge=lfs -text
+perf.data.old filter=lfs diff=lfs merge=lfs -text
+beurs.osm filter=lfs diff=lfs merge=lfs -text
+netherlands-latest.osm filter=lfs diff=lfs merge=lfs -text
+roffa.osm filter=lfs diff=lfs merge=lfs -text
+zuid-holland-latest.osm filter=lfs diff=lfs merge=lfs -text
+zuid-holland-latest.osm.bz2 filter=lfs diff=lfs merge=lfs -text
 *.bz2 filter=lfs diff=lfs merge=lfs -text
 *.data filter=lfs diff=lfs merge=lfs -text
