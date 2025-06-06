@@ -55,11 +55,12 @@ const DataQueue = struct {
         self.offset = 0;
         // order postgres to load file
         const query = "COPY " ++ db_table ++ " FROM '" ++ filename ++ "';";
+        std.debug.print("query: {s}\n", .{query});
         _ = conn.exec(query, .{}) catch {
             if (conn.err) |pge| {
                 std.log.err("PG {s}\n", .{pge.message});
-                std.debug.print("file: {s}\n", .{filename});
-                std.debug.print("buf: {s}\n", .{self.buffer});
+                // std.debug.print("file: {s}\n", .{filename});
+                // std.debug.print("buf: {s}\n", .{self.buffer});
             }
         };
     }
@@ -134,8 +135,9 @@ pub const DB = struct {
                 .host = "127.0.0.1",
             },
             .auth = .{
-                .username = "postgres",
-                .password = "postgres",
+                // user should be owner of DB. User also needs to have SUPERUSER priv
+                .username = "loopje",
+                .password = "loopje",
                 .database = "loopje",
                 .timeout = 10_000,
             },
