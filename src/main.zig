@@ -100,13 +100,13 @@ fn queryNavigationJson(_: *AppState, req: *httpz.Request, res: *httpz.Response) 
             coord.*[0] = node.lon;
             coord.*[1] = node.lat;
         }
-        try res.json(.{ .status = "succes", .geo = .{
+        try res.json(.geo = .{
             .type = "FeatureCollection", .features = .{.{
                 .type = "Feature",
                 .properties = object_empty,
                 .geometry = .{ .coordinates = coordinates, .type = "LineString" },
             }}
-        } }, .{});
+        }, .{});
     } else {
         res.status = 400;
         try res.json("Invalid arguments", .{});
