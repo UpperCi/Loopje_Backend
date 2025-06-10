@@ -100,7 +100,7 @@ fn queryNavigationJson(_: *AppState, req: *httpz.Request, res: *httpz.Response) 
             coord.*[0] = node.lon;
             coord.*[1] = node.lat;
         }
-        try res.json(.geo = .{
+        try res.json(.{
             .type = "FeatureCollection", .features = .{.{
                 .type = "Feature",
                 .properties = object_empty,
