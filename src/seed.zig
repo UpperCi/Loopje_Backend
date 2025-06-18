@@ -105,8 +105,7 @@ fn parseOsm(db: *database.DB, path: []const u8) void {
     const stdout = std.io.getStdOut().writer();
 
     db.startTransaction() catch unreachable;
-    // 11363070619
-    // in_stream.skipBytes(11375795500, .{}) catch {};
+    // in_stream.skipBytes(3700198654, .{}) catch {};
 
     for (0..size) |i| {
         byte = in_stream.readByte() catch {
@@ -131,13 +130,19 @@ fn parseOsm(db: *database.DB, path: []const u8) void {
                     },
                     'w' => { // Way
                         const way = getOsmWayFromTag(item_buf[0..]) catch continue;
-                        db.queueOsmWay(way.id, way.visible) catch {};
+                        db.queueOsmWay(way.id, way.visible) catch {
+                            std.debug.print("Err at {}\n({s})\n", .{i, item_buf[0..item_size]});
+                            return;
+                        };
                         insertions += 1;
                         parent = .{ .Way = way };
                     },
                     't' => { // Tag
                         const tag = getOsmTagFromTag(item_buf[0..]) catch unreachable;
-                        db.queueOsmTag(parent, tag.key, tag.value) catch {};
+                        db.queueOsmTag(parent, tag.key, tag.value) catch {
+                            std.debug.print("Err at {}\n({s})\n", .{i, item_buf[0..item_size]});
+                            return;
+                        };
                         insertions += 1;
                     },
                     'r' => { // Relation
@@ -148,13 +153,21 @@ fn parseOsm(db: *database.DB, path: []const u8) void {
                         if (item_buf[1] == 'o') { // Node
                             // Error return trace
                             const node = getOsmNodeFromTag(item_buf[0..]) catch unreachable;
-                            db.queueOsmNode(node.id, node.lat, node.lon) catch unreachable;
+                            db.queueOsmNode(node.id, node.lat, node.lon) catch {
+                                std.debug.print("Err at {}\n({s})\n", .{i, item_buf[0..item_size]});
+                                return;
+                            };
+
                             insertions += 1;
                             parent = .{ .Node = node };
                         } else { // Nd, connects node to way
                             assert(parent == .Way);
                             const nd_id = getOsmNdIdFromTag(item_buf[0..]) catch unreachable;
-                            db.queueOsmNd(parent, nd_id) catch {};
+                            db.queueOsmNd(parent, nd_id) catch {
+                                std.debug.print("Err at {}\n({s})\n", .{i, item_buf[0..item_size]});
+                                return;
+                            };
+
                             insertions += 1;
                         }
                     },

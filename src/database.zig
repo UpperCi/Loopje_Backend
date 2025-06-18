@@ -38,6 +38,7 @@ pub const OsmEntry = union(OsmType) {
 
 pub const DBError = error{GenericError};
 
+// original: 32k, 512
 const data_queue_size = 32_000;
 const data_queue_margin = 512;
 
@@ -51,18 +52,20 @@ const DataQueue = struct {
         var file = try std.fs.cwd().createFile(filename, .{});
         _ = try file.writer().writeAll(self.buffer[0..self.offset]);
         defer file.close();
+        const off_old = self.offset;
 
         self.offset = 0;
         // order postgres to load file
         const query = "COPY " ++ db_table ++ " FROM '" ++ filename ++ "';";
-        std.debug.print("query: {s}\n", .{query});
-        _ = conn.exec(query, .{}) catch {
+        _ = conn.exec(query, .{}) catch |e| {
             if (conn.err) |pge| {
+                std.debug.print("buf: {s}\n({})\n", .{self.buffer, off_old});
                 std.log.err("PG {s}\n", .{pge.message});
-                // std.debug.print("file: {s}\n", .{filename});
-                // std.debug.print("buf: {s}\n", .{self.buffer});
+                return e;
             }
         };
+        @memset(&self.buffer, 0);
+        // moet de buffer ge-reset worden?
     }
 
     pub fn queue_value(
@@ -336,10 +339,9 @@ pub const DB = struct {
             \\LEFT JOIN osm_nodes ON osm_ways_nodes.node_id = osm_nodes.id
             \\LEFT JOIN osm_ways_tags ON osm_ways_tags.way_id = osm_ways.id
             \\WHERE ST_Contains(ST_MakeEnvelope($1,$2,$3,$4),osm_nodes.position) AND
-            \\osm_ways_tags.key IN ('highway','footway','sidewalk','bicycle')
+            \\osm_ways_tags.key IN ('highway','footway','sidewalk','bicycle','foot','bridge')
             \\;
         ;
-        std.debug.print("query:\n{s}\n", .{query});
         var result = self.conn.query(query, .{ top, left, bottom, right }) catch |err| {
             std.debug.print("Errtype: {any}\n", .{err});
             if (self.conn.err) |pgerr| {

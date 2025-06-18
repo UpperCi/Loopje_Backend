@@ -68,21 +68,21 @@ const weights_time = StaticStringMap(f64).initComptime(.{
 
 // lower is better
 const weights_fuss = StaticStringMap(f64).initComptime(.{
-    .{ "highway - footway", 1.0 },
-    .{ "highway - pedestrian", 1.0 },
-    .{ "highway - bridleway", 1.0 },
-    .{ "highway - corridor", 1.0 },
-    .{ "highway - path", 1.0 },
-    .{ "highway - residential", 2.0 },
-    .{ "highway - living_street", 2.0 },
-    .{ "highway - steps", 1.0 },
-    .{ "highway - track", 1.0 },
+    .{ "highway - footway", 0.0 },
+    .{ "highway - pedestrian", 0.0 },
+    .{ "highway - bridleway", 0.0 },
+    .{ "highway - corridor", 0.0 },
+    .{ "highway - path", 0.0 },
+    .{ "highway - residential", 1.0 },
+    .{ "highway - living_street", 1.0 },
+    .{ "highway - steps", 0.0 },
+    .{ "highway - track", 0.0 },
     .{ "highway - crossing", 3.0 },
     .{ "highway - road", 3.0 },
-    .{ "footway - sidewalk", 1.5 },
-    .{ "footway - traffic_island", 2.0 },
-    .{ "footway - crossing", 1.5 },
-    .{ "bicycle - use_sidepath", 1.5 },
+    .{ "footway - sidewalk", 0.5 },
+    .{ "footway - traffic_island", 1.0 },
+    .{ "footway - crossing", 0.5 },
+    .{ "bicycle - use_sidepath", 0.5 },
 });
 
 pub fn constructNavigationGraph(
@@ -126,6 +126,7 @@ pub fn constructNavigationGraph(
             const distance = @sqrt(dist_x * dist_x + dist_y * dist_y);
             const distance_time = distance * modifier_time;
             const distance_fuss = distance * modifier_fuss;
+            // const distance_fuss = modifier_fuss;
 
             const nav_a_result = try nodes.getOrPutValue(node_a.id, .{
                 .id = node_a.id,
@@ -217,6 +218,7 @@ pub fn navigateBetween(
     }
     // TODO: stop seaching when next node's distance exceeds finish node's
     // var distance_max: f64 = 1e100;
+    // TODO: A*
     var distance_shortest: f64 = 0;
     const first_node = nodes.get(first_id);
     var shortest_node: NavNodeProgress = .{
